@@ -1,6 +1,7 @@
 package com.biblioteca.config;
 
 import com.biblioteca.security.JwtAuthenticationFilter;
+import com.biblioteca.security.RateLimitFilter;
 import com.biblioteca.security.RestAuthenticationEntryPoint;
 import com.biblioteca.security.WerkzeugCompatiblePasswordEncoder;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,13 +26,17 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtFilter;
+    private final RateLimitFilter rateLimitFilter;
     private final RestAuthenticationEntryPoint authEntryPoint;
 
     @Value("${app.cors.allowed-origins}")
     private String allowedOrigins;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtFilter, RestAuthenticationEntryPoint authEntryPoint) {
+    public SecurityConfig(JwtAuthenticationFilter jwtFilter,
+                          RateLimitFilter rateLimitFilter,
+                          RestAuthenticationEntryPoint authEntryPoint) {
         this.jwtFilter = jwtFilter;
+        this.rateLimitFilter = rateLimitFilter;
         this.authEntryPoint = authEntryPoint;
     }
 
@@ -46,10 +51,13 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/api/auth/login", "/api/auth/verify-2fa").permitAll()
-                .requestMatchers("/api/files/**", "/api/uploads/**").permitAll()
+                // /api/files/** is open to support <img src> from browser; the controller
+                // applies per-category role checks (almacenes requires auth + role).
+                .requestMatchers("/api/files/**").permitAll()
                 .requestMatchers("/actuator/health", "/error").permitAll()
                 .anyRequest().authenticated()
             )
+            .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

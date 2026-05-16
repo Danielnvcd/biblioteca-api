@@ -33,7 +33,7 @@ public class CorrectiveActionController {
 
     @GetMapping
     public ResponseEntity<List<CorrectiveActionDto>> list() {
-        List<CorrectiveAction> actions = actionRepository.findAll();
+        List<CorrectiveAction> actions = actionRepository.findAllWithActivities();
         List<CorrectiveActionDto> dtos = actions.stream().map(this::toDto).collect(Collectors.toList());
         return ResponseEntity.ok(dtos);
     }
@@ -92,7 +92,7 @@ public class CorrectiveActionController {
 
     @GetMapping("/{id}")
     public ResponseEntity<CorrectiveActionDto> get(@PathVariable Integer id) {
-        CorrectiveAction action = actionRepository.findById(id)
+        CorrectiveAction action = actionRepository.findByIdWithActivities(id)
                 .orElseThrow(() -> ApiException.notFound("Acción no encontrada"));
         return ResponseEntity.ok(toDto(action));
     }
@@ -118,7 +118,7 @@ public class CorrectiveActionController {
 
     @GetMapping("/actividades-pendientes")
     public ResponseEntity<List<Map<String, Object>>> pendingActivities() {
-        List<CorrectionActivity> activities = activityRepository.findByEstatusNot("Realizado");
+        List<CorrectionActivity> activities = activityRepository.findPendingWithAction();
         LocalDate today = LocalDate.now();
         List<Map<String, Object>> data = activities.stream().map(act -> {
             Map<String, Object> m = new HashMap<>();

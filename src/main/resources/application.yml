@@ -47,6 +47,8 @@ app:
   super-admins: Vanesa Rivera,Daniel
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:false}
 
 logging:
   level:

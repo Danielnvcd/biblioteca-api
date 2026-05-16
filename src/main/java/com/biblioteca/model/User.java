@@ -43,6 +43,13 @@ public class User {
     @Column(name = "last_seen")
     private LocalDateTime lastSeen;
 
+    /**
+     * Updated every time the password is changed. JWTs issued BEFORE this
+     * timestamp are rejected — invalidates all sessions on password change.
+     */
+    @Column(name = "password_changed_at")
+    private LocalDateTime passwordChangedAt;
+
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
     public String getUsername() { return username; }
@@ -67,4 +74,6 @@ public class User {
     public void setProfilePic(String profilePic) { this.profilePic = profilePic; }
     public LocalDateTime getLastSeen() { return lastSeen; }
     public void setLastSeen(LocalDateTime lastSeen) { this.lastSeen = lastSeen; }
+    public LocalDateTime getPasswordChangedAt() { return passwordChangedAt; }
+    public void setPasswordChangedAt(LocalDateTime passwordChangedAt) { this.passwordChangedAt = passwordChangedAt; }
 }

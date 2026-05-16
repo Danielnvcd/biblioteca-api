@@ -5,6 +5,7 @@ import com.biblioteca.exception.ApiException;
 import com.biblioteca.model.User;
 import com.biblioteca.repository.UserRepository;
 import com.biblioteca.security.Permissions;
+import com.biblioteca.security.SessionInvalidationService;
 import com.biblioteca.security.UserPrincipal;
 import com.biblioteca.service.AuditService;
 import com.biblioteca.service.AuthService;
@@ -35,16 +36,19 @@ public class AuthController {
     private final FileStorageService fileStorageService;
     private final PasswordEncoder passwordEncoder;
     private final QrCodeService qrCodeService;
+    private final SessionInvalidationService sessions;
 
     public AuthController(AuthService authService, UserRepository userRepository,
                           AuditService auditService, FileStorageService fileStorageService,
-                          PasswordEncoder passwordEncoder, QrCodeService qrCodeService) {
+                          PasswordEncoder passwordEncoder, QrCodeService qrCodeService,
+                          SessionInvalidationService sessions) {
         this.authService = authService;
         this.userRepository = userRepository;
         this.auditService = auditService;
         this.fileStorageService = fileStorageService;
         this.passwordEncoder = passwordEncoder;
         this.qrCodeService = qrCodeService;
+        this.sessions = sessions;
     }
 
     @PostMapping("/login")
@@ -62,7 +66,8 @@ public class AuthController {
     @PostMapping("/verify-2fa")
     public ResponseEntity<LoginResponse> verify2fa(@Valid @RequestBody Verify2faRequest request, HttpServletRequest req) {
         LoginResponse response = authService.verify2fa(request);
-        auditService.log(request.getUsername(), "Login 2FA exitoso", req.getRemoteAddr());
+        String who = response.getUser() != null ? response.getUser().getUsername() : "?";
+        auditService.log(who, "Login 2FA exitoso", req.getRemoteAddr());
         return ResponseEntity.ok(response);
     }
 
@@ -70,12 +75,13 @@ public class AuthController {
     public ResponseEntity<UserDto> me(@AuthenticationPrincipal UserPrincipal principal) {
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
-        // Throttled last_seen update (5 min) — matches Flask original
+        // Throttled last_seen update (5 min) via targeted UPDATE — avoids
+        // full-row writes and lock contention on concurrent /auth/me calls.
         LocalDateTime now = LocalDateTime.now();
         if (user.getLastSeen() == null
                 || Duration.between(user.getLastSeen(), now).toMinutes() >= 5) {
-            user.setLastSeen(now);
-            userRepository.save(user);
+            userRepository.touchLastSeen(user.getId(), now);
+            user.setLastSeen(now); // keep DTO in sync
         }
         return ResponseEntity.ok(authService.toDto(user));
     }
@@ -111,10 +117,19 @@ public class AuthController {
 
         String username = body.get("username");
         String password = body.get("password");
-        String role = body.getOrDefault("role", "user");
+        String role = body.getOrDefault("role", Permissions.ROLE_USER);
 
         if (username == null || username.isBlank() || password == null || password.isBlank()) {
             throw ApiException.badRequest("Usuario y contraseña son requeridos");
+        }
+        if (username.length() > 80) {
+            throw ApiException.badRequest("Usuario demasiado largo (máx 80)");
+        }
+        if (password.length() < 6) {
+            throw ApiException.badRequest("La contraseña debe tener al menos 6 caracteres");
+        }
+        if (!Permissions.VALID_ROLES.contains(role)) {
+            throw ApiException.badRequest("Rol inválido: " + role);
         }
         if (userRepository.existsByUsername(username)) {
             throw ApiException.badRequest("El usuario ya existe");
@@ -174,7 +189,6 @@ public class AuthController {
                                                               @RequestBody Map<String, String> body,
                                                               @AuthenticationPrincipal UserPrincipal principal,
                                                               HttpServletRequest req) {
-        // Self-change OR super_admin (matches Flask: super_admin_required for /change_user_password)
         boolean self = principal.getId().equals(id);
         if (!self && !Permissions.isSuperAdmin(principal)) {
             throw ApiException.forbidden("No tienes permiso para cambiar esta contraseña");
@@ -182,9 +196,20 @@ public class AuthController {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
 
-        // Even super_admin cannot change protected users' password (matches Flask check)
+        // Even super_admin cannot change protected users' password
         if (!self && Permissions.isProtectedUsername(user.getUsername())) {
             throw ApiException.forbidden("No se puede cambiar la contraseña de un usuario protegido");
+        }
+
+        // Self-change: require current password — prevents takeover via stolen JWT.
+        if (self) {
+            String current = body.get("currentPassword");
+            if (current == null || current.isBlank()) {
+                throw ApiException.badRequest("Ingresa tu contraseña actual");
+            }
+            if (!passwordEncoder.matches(current, user.getPasswordHash())) {
+                throw ApiException.unauthorized("Contraseña actual incorrecta");
+            }
         }
 
         String newPassword = body.get("newPassword");
@@ -195,7 +220,9 @@ public class AuthController {
             throw ApiException.badRequest("La contraseña debe tener al menos 6 caracteres");
         }
         user.setPasswordHash(passwordEncoder.encode(newPassword));
+        user.setPasswordChangedAt(LocalDateTime.now());
         userRepository.save(user);
+        sessions.invalidate(user.getId());   // bust the cache so the new pca takes effect immediately
         auditService.log(principal.getUsername(),
                 "Cambió contraseña de " + user.getUsername(), req.getRemoteAddr());
         return ResponseEntity.ok(Map.of("message", "Contraseña actualizada"));

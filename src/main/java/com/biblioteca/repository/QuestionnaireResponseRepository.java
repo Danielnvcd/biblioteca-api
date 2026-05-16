@@ -8,4 +8,5 @@ import java.util.List;
 public interface QuestionnaireResponseRepository extends JpaRepository<QuestionnaireResponse, Integer> {
     List<QuestionnaireResponse> findByQuestionnaireIdOrderByCreatedAtDesc(Integer questionnaireId);
     long countByQuestionnaireId(Integer questionnaireId);
+    boolean existsByQuestionnaireIdAndUserName(Integer questionnaireId, String userName);
 }

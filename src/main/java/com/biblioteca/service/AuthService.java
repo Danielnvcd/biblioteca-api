@@ -34,7 +34,8 @@ public class AuthService {
         }
 
         if (user.getTotpSecret() != null && !user.getTotpSecret().isEmpty()) {
-            return new LoginResponse(true, "Se requiere código 2FA");
+            String stepToken = tokenProvider.generate2faStepToken(user.getId(), user.getUsername());
+            return LoginResponse.twoFactorPending(stepToken, "Se requiere código 2FA");
         }
 
         String token = tokenProvider.generateToken(user.getId(), user.getUsername(), user.getRole());
@@ -42,8 +43,18 @@ public class AuthService {
     }
 
     public LoginResponse verify2fa(Verify2faRequest request) {
-        User user = userRepository.findByUsername(request.getUsername())
-                .orElseThrow(() -> ApiException.unauthorized("Usuario no encontrado o 2FA no configurado"));
+        // Step token MUST be valid and have scope=2fa-pending — proves step 1 completed.
+        String stepToken = request.getStepToken();
+        if (stepToken == null || !tokenProvider.validateToken(stepToken)) {
+            throw ApiException.unauthorized("Sesión 2FA expirada, vuelve a iniciar sesión");
+        }
+        if (!"2fa-pending".equals(tokenProvider.getScopeFromToken(stepToken))) {
+            throw ApiException.unauthorized("Token inválido para 2FA");
+        }
+
+        Integer userId = tokenProvider.getUserIdFromToken(stepToken);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> ApiException.unauthorized("Sesión 2FA inválida"));
 
         if (user.getTotpSecret() == null || user.getTotpSecret().isEmpty()) {
             throw ApiException.badRequest("2FA no está configurado para este usuario");

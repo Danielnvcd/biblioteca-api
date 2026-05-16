@@ -110,13 +110,20 @@ public class ContentController {
     @PostMapping("/{category}/delete/{id}")
     public ResponseEntity<Map<String, String>> delete(@PathVariable String category, @PathVariable String id,
                                                       @AuthenticationPrincipal UserPrincipal principal) {
-        Permissions.requireDeleteFor(principal, category);
-
         Content content = contentRepository.findById(id)
                 .orElseThrow(() -> ApiException.notFound("Contenido no encontrado"));
-        fileStorageService.delete(content.getFilename(), category);
+
+        // Anti-IDOR: enforce permission on the real category of the row, not the URL.
+        // Without this, /content/lecciones/delete/{id-de-almacenes} bypasses the
+        // stricter almacenes role check.
+        if (!category.equalsIgnoreCase(content.getCategory())) {
+            throw ApiException.forbidden("La categoría del recurso no coincide con la ruta");
+        }
+        Permissions.requireDeleteFor(principal, content.getCategory());
+
+        fileStorageService.delete(content.getFilename(), content.getCategory());
         if (content.getCoverImage() != null) {
-            fileStorageService.delete(content.getCoverImage(), category);
+            fileStorageService.delete(content.getCoverImage(), content.getCategory());
         }
         contentRepository.delete(content);
         return ResponseEntity.ok(Map.of("message", "Eliminado correctamente"));

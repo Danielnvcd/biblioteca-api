@@ -1,11 +1,15 @@
 package com.biblioteca.controller;
 
+import com.biblioteca.dto.KpiDto;
+import com.biblioteca.dto.ObjetivoDto;
+import com.biblioteca.exception.ApiException;
 import com.biblioteca.model.KPI;
 import com.biblioteca.model.Objetivo;
 import com.biblioteca.repository.KPIRepository;
 import com.biblioteca.repository.ObjetivoRepository;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.UserPrincipal;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -34,18 +38,31 @@ public class KPIController {
     }
 
     @PostMapping("/create")
-    public ResponseEntity<Map<String, String>> createKpi(@RequestBody KPI kpi,
+    public ResponseEntity<Map<String, String>> createKpi(@Valid @RequestBody KpiDto dto,
                                                          @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
+        KPI kpi = new KPI();
+        kpi.setNombre(dto.getNombre());
+        kpi.setValorActual(dto.getValorActual());
+        kpi.setMeta(dto.getMeta());
+        kpi.setUnidad(dto.getUnidad());
+        kpi.setEstado(dto.getEstado() != null ? dto.getEstado() : "ok");
         kpiRepository.save(kpi);
         return ResponseEntity.ok(Map.of("message", "KPI creado"));
     }
 
     @PostMapping("/objetivo/create")
-    public ResponseEntity<Map<String, String>> createObjetivo(@RequestBody Objetivo objetivo,
+    public ResponseEntity<Map<String, String>> createObjetivo(@Valid @RequestBody ObjetivoDto dto,
                                                               @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
-        objetivoRepository.save(objetivo);
+        Objetivo o = new Objetivo();
+        o.setTitulo(dto.getTitulo());
+        o.setProcesoLider(dto.getProcesoLider());
+        o.setProcesosInvolucrados(dto.getProcesosInvolucrados());
+        o.setMetaDesc(dto.getMetaDesc());
+        o.setResultadoActual(dto.getResultadoActual());
+        o.setEstado(dto.getEstado() != null ? dto.getEstado() : "en_meta");
+        objetivoRepository.save(o);
         return ResponseEntity.ok(Map.of("message", "Objetivo creado"));
     }
 
@@ -53,6 +70,7 @@ public class KPIController {
     public ResponseEntity<Map<String, String>> deleteKpi(@PathVariable Integer id,
                                                          @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireSuperAdmin(principal);
+        if (!kpiRepository.existsById(id)) throw ApiException.notFound("KPI no encontrado");
         kpiRepository.deleteById(id);
         return ResponseEntity.ok(Map.of("message", "KPI eliminado"));
     }
@@ -61,6 +79,7 @@ public class KPIController {
     public ResponseEntity<Map<String, String>> deleteObjetivo(@PathVariable Integer id,
                                                               @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireSuperAdmin(principal);
+        if (!objetivoRepository.existsById(id)) throw ApiException.notFound("Objetivo no encontrado");
         objetivoRepository.deleteById(id);
         return ResponseEntity.ok(Map.of("message", "Objetivo eliminado"));
     }

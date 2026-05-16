@@ -28,6 +28,9 @@ public final class Permissions {
 
     public static final Set<String> PROTECTED_USERNAMES = Set.of("Daniel", "Vanesa Rivera");
 
+    public static final Set<String> VALID_ROLES = Set.of(
+            ROLE_USER, ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_ALMACEN_ADMIN, ROLE_ALMACEN_USER);
+
     private Permissions() {}
 
     /* ---------- Predicates ---------- */

@@ -13,7 +13,9 @@
       "PowerShell($env:JAVA_HOME=\"C:\\\\Program Files\\\\Java\\\\jdk-17\"; .\\\\mvnw.cmd -q -DskipTests compile 2>&1 | Select-Object -Last 30)",
       "PowerShell($env:PGPASSWORD=\"maxipet4311\"; & \"C:\\\\Program Files\\\\PostgreSQL\\\\18\\\\bin\\\\psql.exe\" -U phenom_user -h localhost -d phenom -t -c \"SELECT username, role FROM users ORDER BY role, username LIMIT 20;\" 2>&1)",
       "PowerShell(Get-Content *)",
-      "PowerShell($env:JAVA_HOME=\"C:\\\\Program Files\\\\Java\\\\jdk-17\"; .\\\\mvnw.cmd -q -DskipTests compile 2>&1 | Select-Object -Last 20)"
+      "PowerShell($env:JAVA_HOME=\"C:\\\\Program Files\\\\Java\\\\jdk-17\"; .\\\\mvnw.cmd -q -DskipTests compile 2>&1 | Select-Object -Last 20)",
+      "PowerShell($env:JAVA_HOME=\"C:\\\\Program Files\\\\Java\\\\jdk-17\"; .\\\\mvnw.cmd -q -DskipTests compile 2>&1 | Select-Object -Last 40)",
+      "PowerShell($env:JAVA_HOME=\"C:\\\\Program Files\\\\Java\\\\jdk-17\"; .\\\\mvnw.cmd -q -U -DskipTests compile 2>&1 | Select-Object -Last 40)"
     ]
   }
 }

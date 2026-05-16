@@ -30,10 +30,40 @@ public class JwtTokenProvider {
                 .subject(userId.toString())
                 .claim("username", username)
                 .claim("role", role)
+                .claim("scope", "access")
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(secretKey)
                 .compact();
+    }
+
+    /**
+     * Short-lived token (5 min) emitted after a successful password check when
+     * the user has 2FA enabled. Required by /verify-2fa to prove the caller
+     * actually completed step 1.
+     */
+    public String generate2faStepToken(Integer userId, String username) {
+        Date now = new Date();
+        Date expiry = new Date(now.getTime() + 5 * 60 * 1000L);
+        return Jwts.builder()
+                .subject(userId.toString())
+                .claim("username", username)
+                .claim("scope", "2fa-pending")
+                .issuedAt(now)
+                .expiration(expiry)
+                .signWith(secretKey)
+                .compact();
+    }
+
+    public String getScopeFromToken(String token) {
+        Object s = parseToken(token).get("scope");
+        return s == null ? "access" : s.toString();
+    }
+
+    /** Issued-at as epoch seconds. */
+    public long getIssuedAtEpoch(String token) {
+        Date iat = parseToken(token).getIssuedAt();
+        return iat == null ? 0L : iat.getTime() / 1000L;
     }
 
     public Integer getUserIdFromToken(String token) {

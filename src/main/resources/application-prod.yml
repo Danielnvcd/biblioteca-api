@@ -1,0 +1,49 @@
+# Activate with SPRING_PROFILES_ACTIVE=prod (or --spring.profiles.active=prod).
+# In prod, JWT_SECRET, DATABASE_URL, DB_USERNAME, DB_PASSWORD and CORS_ORIGINS
+# MUST be provided via env vars — the defaults below intentionally fail-fast.
+server:
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
+  forward-headers-strategy: framework   # honor X-Forwarded-* from a reverse proxy
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate                # NEVER let Hibernate alter prod schema
+    open-in-view: false                 # close DB session at end of service layer
+  datasource:
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 3
+      idle-timeout: 300000
+      max-lifetime: 1500000
+      connection-timeout: 20000
+      leak-detection-threshold: 30000
+
+logging:
+  level:
+    root: WARN
+    com.biblioteca: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-}] %logger{36} - %msg%n"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never               # don't leak DB/disk details over health
+
+app:
+  jwt:
+    # No fallback in prod. If JWT_SECRET isn't set, app refuses to start.
+    secret: ${JWT_SECRET}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+  rate-limit:
+    enabled: true

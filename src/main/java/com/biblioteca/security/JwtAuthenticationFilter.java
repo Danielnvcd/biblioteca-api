@@ -18,9 +18,11 @@ import java.util.Collections;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider tokenProvider;
+    private final SessionInvalidationService sessions;
 
-    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider) {
+    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider, SessionInvalidationService sessions) {
         this.tokenProvider = tokenProvider;
+        this.sessions = sessions;
     }
 
     @Override
@@ -29,16 +31,29 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             String token = extractToken(request);
             if (StringUtils.hasText(token) && tokenProvider.validateToken(token)) {
-                Integer userId = tokenProvider.getUserIdFromToken(token);
-                String username = tokenProvider.getUsernameFromToken(token);
-                String role = tokenProvider.getRoleFromToken(token);
+                // Reject 2FA step tokens — those only authorize /verify-2fa, never general access.
+                String scope = tokenProvider.getScopeFromToken(token);
+                if ("access".equals(scope)) {
+                    Integer userId = tokenProvider.getUserIdFromToken(token);
+                    // Reject tokens issued before the user's last password change.
+                    long issuedAt = tokenProvider.getIssuedAtEpoch(token);
+                    long pwdChanged = sessions.passwordChangedEpoch(userId);
+                    if (pwdChanged > 0 && issuedAt < pwdChanged) {
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
+                    String username = tokenProvider.getUsernameFromToken(token);
+                    String role = tokenProvider.getRoleFromToken(token);
+                    if (role == null) role = "user";
 
-                UserPrincipal principal = new UserPrincipal(userId, username, role);
-                UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
-                        principal, null, Collections.singletonList(() -> "ROLE_" + role.toUpperCase()));
-                auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    UserPrincipal principal = new UserPrincipal(userId, username, role);
+                    final String roleAuthority = "ROLE_" + role.toUpperCase();
+                    UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                            principal, null, Collections.singletonList(() -> roleAuthority));
+                    auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
-                SecurityContextHolder.getContext().setAuthentication(auth);
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                }
             }
         } catch (Exception ex) {
             SecurityContextHolder.clearContext();

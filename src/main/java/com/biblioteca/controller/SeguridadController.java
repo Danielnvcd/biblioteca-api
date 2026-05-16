@@ -7,6 +7,7 @@ import com.biblioteca.repository.*;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.UserPrincipal;
 import com.biblioteca.service.FileStorageService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -26,16 +27,19 @@ public class SeguridadController {
     private final QuestionnaireRepository questionnaireRepository;
     private final QuestionnaireResponseRepository responseRepository;
     private final FileStorageService fileStorageService;
+    private final ObjectMapper objectMapper;
 
     public SeguridadController(SeguridadRepository seguridadRepository, ContentRepository contentRepository,
                                QuestionnaireRepository questionnaireRepository,
                                QuestionnaireResponseRepository responseRepository,
-                               FileStorageService fileStorageService) {
+                               FileStorageService fileStorageService,
+                               ObjectMapper objectMapper) {
         this.seguridadRepository = seguridadRepository;
         this.contentRepository = contentRepository;
         this.questionnaireRepository = questionnaireRepository;
         this.responseRepository = responseRepository;
         this.fileStorageService = fileStorageService;
+        this.objectMapper = objectMapper;
     }
 
     @GetMapping
@@ -54,7 +58,6 @@ public class SeguridadController {
         List<Content> videos = contentRepository.findByCategoryAndManualCategoryOrderByCreatedAtDesc("seguridad", "video");
         response.put("videos", videos.stream().map(this::toContentDto).collect(Collectors.toList()));
 
-        com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
         List<Questionnaire> cuestionarios = questionnaireRepository.findAllByOrderByCreatedAtDesc();
         List<Map<String, Object>> qList = cuestionarios.stream().map(q -> {
             Map<String, Object> m = new HashMap<>();
@@ -64,7 +67,7 @@ public class SeguridadController {
             m.put("createdBy", q.getCreatedBy());
             m.put("createdAt", q.getCreatedAt());
             try {
-                m.put("questions", om.readValue(q.getQuestions(), List.class));
+                m.put("questions", objectMapper.readValue(q.getQuestions(), List.class));
             } catch (Exception e) {
                 m.put("questions", List.of());
             }
@@ -158,6 +161,15 @@ public class SeguridadController {
             @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
+        // Reject javascript:, data:, file:, vbscript:, etc. — would XSS via <iframe src>.
+        if (videoUrl == null || videoUrl.isBlank()) {
+            throw ApiException.badRequest("La URL del video es requerida");
+        }
+        String lower = videoUrl.trim().toLowerCase();
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+            throw ApiException.badRequest("La URL debe comenzar con http:// o https://");
+        }
+
         Content c = new Content();
         c.setId(UUID.randomUUID().toString());
         c.setTitle(title);
@@ -185,7 +197,7 @@ public class SeguridadController {
         if (questions == null || questions.isEmpty()) {
             throw ApiException.badRequest("El cuestionario debe tener al menos una pregunta");
         }
-        q.setQuestions(new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(questions).toString());
+        q.setQuestions(objectMapper.valueToTree(questions).toString());
         q.setCreatedBy(principal.getUsername());
         q.setCreatedAt(LocalDateTime.now());
         questionnaireRepository.save(q);
@@ -196,13 +208,18 @@ public class SeguridadController {
     public ResponseEntity<Map<String, String>> responder(@PathVariable Integer id,
                                                          @RequestBody Map<String, String> answers,
                                                          @AuthenticationPrincipal UserPrincipal principal) {
-        Questionnaire q = questionnaireRepository.findById(id)
-                .orElseThrow(() -> ApiException.notFound("Cuestionario no encontrado"));
+        if (!questionnaireRepository.existsById(id)) {
+            throw ApiException.notFound("Cuestionario no encontrado");
+        }
+        // One response per user per questionnaire — prevents spam / duplicates.
+        if (responseRepository.existsByQuestionnaireIdAndUserName(id, principal.getUsername())) {
+            throw ApiException.badRequest("Ya respondiste este cuestionario");
+        }
         QuestionnaireResponse r = new QuestionnaireResponse();
         r.setQuestionnaireId(id);
         r.setUserName(principal.getUsername());
         try {
-            r.setAnswers(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(answers));
+            r.setAnswers(objectMapper.writeValueAsString(answers));
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             throw ApiException.badRequest("Error procesando respuestas");
         }
@@ -229,7 +246,6 @@ public class SeguridadController {
         if (!questionnaireRepository.existsById(id)) {
             throw ApiException.notFound("Cuestionario no encontrado");
         }
-        com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
         List<Map<String, Object>> data = responseRepository
                 .findByQuestionnaireIdOrderByCreatedAtDesc(id)
                 .stream()
@@ -239,7 +255,7 @@ public class SeguridadController {
                     m.put("userName", r.getUserName());
                     m.put("createdAt", r.getCreatedAt());
                     try {
-                        m.put("answers", om.readValue(r.getAnswers(), Map.class));
+                        m.put("answers", objectMapper.readValue(r.getAnswers(), Map.class));
                     } catch (Exception e) {
                         m.put("answers", Map.of());
                     }
