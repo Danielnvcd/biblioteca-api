@@ -13,3 +13,4 @@ uploads/*
 !uploads/.gitkeep
 application-local.yml
 .env
+.claude/*
