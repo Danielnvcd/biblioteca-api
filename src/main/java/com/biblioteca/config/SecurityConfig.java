@@ -50,11 +50,12 @@ public class SecurityConfig {
             .exceptionHandling(eh -> eh.authenticationEntryPoint(authEntryPoint))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/auth/login", "/api/auth/verify-2fa").permitAll()
+                .requestMatchers("/api/auth/login", "/api/auth/verify-2fa",
+                                 "/api/auth/refresh", "/api/auth/logout").permitAll()
                 // /api/files/** is open to support <img src> from browser; the controller
                 // applies per-category role checks (almacenes requires auth + role).
                 .requestMatchers("/api/files/**").permitAll()
-                .requestMatchers("/actuator/health", "/error").permitAll()
+                .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus", "/error").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
@@ -83,7 +84,7 @@ public class SecurityConfig {
         config.setAllowedOrigins(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
-        config.setExposedHeaders(List.of("Authorization", "Content-Disposition"));
+        config.setExposedHeaders(List.of("Authorization", "Content-Disposition", "X-Request-Id"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

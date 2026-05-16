@@ -28,14 +28,13 @@ logging:
     root: WARN
     com.biblioteca: INFO
     org.hibernate.SQL: WARN
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-}] %logger{36} - %msg%n"
+  # Output format (JSON) is controlled by logback-spring.xml under the "prod" profile.
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       show-details: never               # don't leak DB/disk details over health
@@ -44,6 +43,7 @@ app:
   jwt:
     # No fallback in prod. If JWT_SECRET isn't set, app refuses to start.
     secret: ${JWT_SECRET}
-    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+    expiration-ms: ${JWT_EXPIRATION_MS:900000}
+    refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
   rate-limit:
     enabled: true

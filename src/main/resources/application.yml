@@ -17,7 +17,7 @@ spring:
       max-lifetime: 1800000
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:
@@ -26,6 +26,16 @@ spring:
         jdbc:
           lob:
             non_contextual_creation: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    # Schema existente (prod / dev actual) se considera ya en V1. Flyway crea
+    # flyway_schema_history en el primer arranque marcando V1 como baseline
+    # y NO re-ejecuta V1; las siguientes migraciones (V2+) sí corren.
+    # En BD vacía no hay baseline — Flyway corre V1 y V2 desde cero.
+    baseline-version: 1
+    locations: classpath:db/migration
+    default-schema: ${DB_SCHEMA:public}
   servlet:
     multipart:
       max-file-size: 50MB
@@ -40,7 +50,8 @@ spring:
 app:
   jwt:
     secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970337336763979244226452948404D635166546A576E5A7234753778214125442A47}
-    expiration-ms: 86400000
+    expiration-ms: 900000              # 15 min — short-lived access token
+    refresh-expiration-ms: 604800000   # 7 days — refresh rotated on every use
   upload:
     dir: ${UPLOAD_DIR:./uploads}
   allowed-extensions: pdf,doc,docx,ppt,pptx,xls,xlsx,xlsm,jpg,png,mp4,mp3,wav,heic
@@ -53,3 +64,15 @@ app:
 logging:
   level:
     com.biblioteca: INFO
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    tags:
+      application: biblioteca-api

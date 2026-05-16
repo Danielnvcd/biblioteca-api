@@ -40,19 +40,26 @@ public class JwtTokenProvider {
     /**
      * Short-lived token (5 min) emitted after a successful password check when
      * the user has 2FA enabled. Required by /verify-2fa to prove the caller
-     * actually completed step 1.
+     * actually completed step 1. Carries the "remember" choice so it can't be
+     * tampered with between login and verify-2fa.
      */
-    public String generate2faStepToken(Integer userId, String username) {
+    public String generate2faStepToken(Integer userId, String username, boolean remember) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + 5 * 60 * 1000L);
         return Jwts.builder()
                 .subject(userId.toString())
                 .claim("username", username)
                 .claim("scope", "2fa-pending")
+                .claim("remember", remember)
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(secretKey)
                 .compact();
+    }
+
+    public boolean getRememberFromToken(String token) {
+        Object r = parseToken(token).get("remember");
+        return r instanceof Boolean b && b;
     }
 
     public String getScopeFromToken(String token) {

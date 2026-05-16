@@ -4,7 +4,9 @@ import com.biblioteca.dto.*;
 import com.biblioteca.exception.ApiException;
 import com.biblioteca.model.User;
 import com.biblioteca.repository.UserRepository;
+import com.biblioteca.security.RefreshTokenService;
 import com.biblioteca.security.Permissions;
+import com.biblioteca.security.RefreshCookieFactory;
 import com.biblioteca.security.SessionInvalidationService;
 import com.biblioteca.security.UserPrincipal;
 import com.biblioteca.service.AuditService;
@@ -15,7 +17,10 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -37,11 +42,15 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final QrCodeService qrCodeService;
     private final SessionInvalidationService sessions;
+    private final RefreshCookieFactory refreshCookieFactory;
+    private final RefreshTokenService refreshTokenService;
 
     public AuthController(AuthService authService, UserRepository userRepository,
                           AuditService auditService, FileStorageService fileStorageService,
                           PasswordEncoder passwordEncoder, QrCodeService qrCodeService,
-                          SessionInvalidationService sessions) {
+                          SessionInvalidationService sessions,
+                          RefreshCookieFactory refreshCookieFactory,
+                          RefreshTokenService refreshTokenService) {
         this.authService = authService;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -49,14 +58,16 @@ public class AuthController {
         this.passwordEncoder = passwordEncoder;
         this.qrCodeService = qrCodeService;
         this.sessions = sessions;
+        this.refreshCookieFactory = refreshCookieFactory;
+        this.refreshTokenService = refreshTokenService;
     }
 
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest req) {
         try {
-            LoginResponse response = authService.login(request);
+            AuthService.AuthResult result = authService.login(request, req.getRemoteAddr(), req.getHeader("User-Agent"));
             auditService.log(request.getUsername(), "Login exitoso", req.getRemoteAddr());
-            return ResponseEntity.ok(response);
+            return withOptionalRefreshCookie(result);
         } catch (ApiException e) {
             auditService.log(request.getUsername(), "Login fallido", req.getRemoteAddr());
             throw e;
@@ -65,10 +76,43 @@ public class AuthController {
 
     @PostMapping("/verify-2fa")
     public ResponseEntity<LoginResponse> verify2fa(@Valid @RequestBody Verify2faRequest request, HttpServletRequest req) {
-        LoginResponse response = authService.verify2fa(request);
-        String who = response.getUser() != null ? response.getUser().getUsername() : "?";
+        AuthService.AuthResult result = authService.verify2fa(request, req.getRemoteAddr(), req.getHeader("User-Agent"));
+        String who = result.body().getUser() != null ? result.body().getUser().getUsername() : "?";
         auditService.log(who, "Login 2FA exitoso", req.getRemoteAddr());
-        return ResponseEntity.ok(response);
+        return withOptionalRefreshCookie(result);
+    }
+
+    @PostMapping("/refresh")
+    public ResponseEntity<LoginResponse> refresh(
+            @CookieValue(value = RefreshCookieFactory.COOKIE_NAME, required = false) String currentRefresh,
+            HttpServletRequest req) {
+        AuthService.AuthResult result = authService.refresh(currentRefresh, req.getRemoteAddr(), req.getHeader("User-Agent"));
+        return withOptionalRefreshCookie(result);
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<Map<String, String>> logout(
+            @CookieValue(value = RefreshCookieFactory.COOKIE_NAME, required = false) String currentRefresh) {
+        authService.logout(currentRefresh);
+        ResponseCookie deletion = refreshCookieFactory.buildDeletion();
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, deletion.toString())
+                .body(Map.of("message", "Sesión cerrada"));
+    }
+
+    /**
+     * Wraps an AuthResult in a ResponseEntity, attaching the refresh cookie
+     * if one was issued (skipped for 2FA-pending logins, which only return a
+     * step token).
+     */
+    private ResponseEntity<LoginResponse> withOptionalRefreshCookie(AuthService.AuthResult result) {
+        if (result.refreshToken() == null) {
+            return ResponseEntity.ok(result.body());
+        }
+        ResponseCookie cookie = refreshCookieFactory.build(result.refreshToken());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, cookie.toString())
+                .body(result.body());
     }
 
     @GetMapping("/me")
@@ -223,6 +267,8 @@ public class AuthController {
         user.setPasswordChangedAt(LocalDateTime.now());
         userRepository.save(user);
         sessions.invalidate(user.getId());   // bust the cache so the new pca takes effect immediately
+        // Also kill every refresh token — a stolen one shouldn't outlive the password change.
+        refreshTokenService.revokeAllForUser(user.getId());
         auditService.log(principal.getUsername(),
                 "Cambió contraseña de " + user.getUsername(), req.getRemoteAddr());
         return ResponseEntity.ok(Map.of("message", "Contraseña actualizada"));
