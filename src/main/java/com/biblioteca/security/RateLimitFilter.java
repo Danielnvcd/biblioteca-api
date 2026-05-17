@@ -85,13 +85,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private static String clientIp(HttpServletRequest req) {
-        // Honor proxy headers when reverse-proxied (configured via forward-headers-strategy in prod).
-        String h = req.getHeader("X-Forwarded-For");
-        if (h != null && !h.isBlank()) {
-            int comma = h.indexOf(',');
-            return (comma > 0 ? h.substring(0, comma) : h).trim();
-        }
-        h = req.getHeader("X-Real-IP");
-        return h != null && !h.isBlank() ? h : req.getRemoteAddr();
+        // Rely on req.getRemoteAddr() — Spring's forward-headers-strategy=framework
+        // (set in application-prod.yml) already rewrites this from a trusted
+        // X-Forwarded-For when behind a reverse proxy. Reading the header here
+        // directly would let any caller spoof it and reset the bucket on each
+        // request, defeating the whole rate limit.
+        return req.getRemoteAddr();
     }
 }

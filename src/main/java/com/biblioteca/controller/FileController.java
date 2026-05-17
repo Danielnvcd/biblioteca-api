@@ -22,11 +22,16 @@ import java.util.concurrent.TimeUnit;
 public class FileController {
 
     /**
-     * Categorías que requieren rol específico para descargar (no solo para listar).
-     * Almacenes es el caso obvio. Quejas, perfiles y seguridad permanecen públicas
-     * por compatibilidad con <img src> y previews directos.
+     * Categorías que pueden ser servidas sin autenticación. Solo las que el
+     * frontend renderiza con <img src=...> directo (que no puede llevar
+     * Authorization header). Todo lo demás exige JWT — los downloads de docs,
+     * manuales, cursos y lecciones pasan por axios y sí pueden adjuntar el
+     * header automáticamente.
      */
-    private static final Set<String> RESTRICTED_CATEGORIES = Set.of("almacenes");
+    private static final Set<String> PUBLIC_CATEGORIES = Set.of(
+            "perfiles", "boletin", "quejas", "seguridad");
+    /** Sub-conjunto de no-públicas que además requieren rol específico. */
+    private static final Set<String> ROLE_RESTRICTED = Set.of("almacenes");
 
     private final FileStorageService fileStorageService;
 
@@ -36,12 +41,15 @@ public class FileController {
 
     @GetMapping("/{category}/{filename}")
     public ResponseEntity<Resource> getFile(@PathVariable String category, @PathVariable String filename) {
-        if (RESTRICTED_CATEGORIES.contains(category.toLowerCase())) {
+        String cat = category.toLowerCase();
+        if (!PUBLIC_CATEGORIES.contains(cat)) {
             UserPrincipal principal = currentPrincipal();
             if (principal == null) {
                 return ResponseEntity.status(401).build();
             }
-            if ("almacenes".equalsIgnoreCase(category) && !Permissions.canDownloadAlmacenes(principal)) {
+            if (ROLE_RESTRICTED.contains(cat)
+                    && "almacenes".equals(cat)
+                    && !Permissions.canDownloadAlmacenes(principal)) {
                 return ResponseEntity.status(403).build();
             }
         }

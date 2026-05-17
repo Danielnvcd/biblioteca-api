@@ -45,5 +45,8 @@ app:
     secret: ${JWT_SECRET}
     expiration-ms: ${JWT_EXPIRATION_MS:900000}
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:604800000}
+  encryption:
+    # No fallback in prod. Generate with: openssl rand -base64 32
+    key: ${APP_ENCRYPTION_KEY}
   rate-limit:
     enabled: true

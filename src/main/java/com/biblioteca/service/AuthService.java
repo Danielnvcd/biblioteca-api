@@ -4,6 +4,7 @@ import com.biblioteca.dto.*;
 import com.biblioteca.exception.ApiException;
 import com.biblioteca.model.User;
 import com.biblioteca.repository.UserRepository;
+import com.biblioteca.security.EncryptionService;
 import com.biblioteca.security.JwtTokenProvider;
 import com.biblioteca.security.RefreshTokenService;
 import com.biblioteca.security.TotpService;
@@ -18,15 +19,18 @@ public class AuthService {
     private final JwtTokenProvider tokenProvider;
     private final TotpService totpService;
     private final RefreshTokenService refreshTokenService;
+    private final EncryptionService encryptionService;
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
                        JwtTokenProvider tokenProvider, TotpService totpService,
-                       RefreshTokenService refreshTokenService) {
+                       RefreshTokenService refreshTokenService,
+                       EncryptionService encryptionService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
         this.totpService = totpService;
         this.refreshTokenService = refreshTokenService;
+        this.encryptionService = encryptionService;
     }
 
     /**
@@ -74,7 +78,7 @@ public class AuthService {
             throw ApiException.badRequest("2FA no está configurado para este usuario");
         }
 
-        if (!totpService.verify(user.getTotpSecret(), request.getCode())) {
+        if (!totpService.verify(encryptionService.decrypt(user.getTotpSecret()), request.getCode())) {
             throw ApiException.unauthorized("Código incorrecto");
         }
 
@@ -129,7 +133,8 @@ public class AuthService {
         if (!totpService.verify(secret, code)) {
             throw ApiException.badRequest("Código incorrecto, intenta de nuevo");
         }
-        user.setTotpSecret(secret);
+        // Encrypt at rest — DB leak shouldn't grant attackers valid TOTP codes.
+        user.setTotpSecret(encryptionService.encrypt(secret));
         userRepository.save(user);
     }
 
