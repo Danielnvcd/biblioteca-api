@@ -1,20 +1,43 @@
 package com.biblioteca.dto;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.util.List;
 
 public class CorrectiveActionDto {
     private Integer id;
+
+    @NotBlank
+    @Size(max = 50)
     private String folio;
+
     private LocalDate fechaReporte;
+
+    @NotBlank
+    @Size(max = 100)
     private String origen;
+
+    @NotBlank
+    @Size(max = 100)
     private String reporta;
+
+    @NotBlank
+    @Size(max = 4000)
     private String descripcion;
+
+    @Size(max = 200)
     private String medidaTomada;
+
+    @Size(max = 100)
     private String departamento;
+
     private LocalDate fechaEval1;
     private LocalDate fechaEval2;
+
+    @Size(max = 50)
     private String estatus;
+
     private List<CorrectionActivityDto> activities;
 
     public Integer getId() { return id; }

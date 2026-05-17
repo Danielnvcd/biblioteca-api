@@ -55,7 +55,7 @@ public class SecurityConfig {
                 // /api/files/** is open to support <img src> from browser; the controller
                 // applies per-category role checks (almacenes requires auth + role).
                 .requestMatchers("/api/files/**").permitAll()
-                .requestMatchers("/actuator/health", "/actuator/info", "/actuator/prometheus", "/error").permitAll()
+                .requestMatchers("/actuator/health", "/actuator/info", "/error").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)

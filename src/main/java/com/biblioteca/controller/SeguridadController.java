@@ -1,5 +1,6 @@
 package com.biblioteca.controller;
 
+import com.biblioteca.dto.CreateCuestionarioRequest;
 import com.biblioteca.dto.SeguridadDto;
 import com.biblioteca.exception.ApiException;
 import com.biblioteca.model.*;
@@ -10,8 +11,12 @@ import com.biblioteca.service.FileStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -20,6 +25,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/seguridad")
+@Validated
 public class SeguridadController {
 
     private final SeguridadRepository seguridadRepository;
@@ -81,7 +87,7 @@ public class SeguridadController {
     }
 
     @PostMapping("/alerta")
-    public ResponseEntity<Map<String, String>> createAlerta(@RequestBody SeguridadDto dto,
+    public ResponseEntity<Map<String, String>> createAlerta(@Valid @RequestBody SeguridadDto dto,
                                                             @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
@@ -109,8 +115,8 @@ public class SeguridadController {
     @PostMapping("/general/upload")
     public ResponseEntity<Map<String, String>> uploadGeneral(
             @RequestParam("file") MultipartFile file,
-            @RequestParam("titulo") String title,
-            @RequestParam(required = false) String descripcion,
+            @RequestParam("titulo") @NotBlank @Size(max = 150) String title,
+            @RequestParam(required = false) @Size(max = 4000) String descripcion,
             @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
@@ -132,8 +138,8 @@ public class SeguridadController {
     public ResponseEntity<Map<String, String>> createPodcast(
             @RequestParam("audio") MultipartFile audio,
             @RequestParam(required = false) MultipartFile imagen,
-            @RequestParam("titulo") String title,
-            @RequestParam(required = false) String descripcion,
+            @RequestParam("titulo") @NotBlank @Size(max = 150) String title,
+            @RequestParam(required = false) @Size(max = 4000) String descripcion,
             @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
@@ -155,9 +161,9 @@ public class SeguridadController {
 
     @PostMapping("/video")
     public ResponseEntity<Map<String, String>> createVideo(
-            @RequestParam("titulo") String title,
-            @RequestParam("videoUrl") String videoUrl,
-            @RequestParam(required = false) String descripcion,
+            @RequestParam("titulo") @NotBlank @Size(max = 150) String title,
+            @RequestParam("videoUrl") @NotBlank @Size(max = 500) String videoUrl,
+            @RequestParam(required = false) @Size(max = 4000) String descripcion,
             @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
@@ -187,19 +193,14 @@ public class SeguridadController {
     }
 
     @PostMapping("/cuestionario")
-    public ResponseEntity<Map<String, String>> createCuestionario(@RequestBody Map<String, Object> body,
+    public ResponseEntity<Map<String, String>> createCuestionario(@Valid @RequestBody CreateCuestionarioRequest body,
                                                                   @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
         Questionnaire q = new Questionnaire();
-        q.setTitle((String) body.get("title"));
-        q.setDescription((String) body.get("description"));
-        @SuppressWarnings("unchecked")
-        List<String> questions = (List<String>) body.get("questions");
-        if (questions == null || questions.isEmpty()) {
-            throw ApiException.badRequest("El cuestionario debe tener al menos una pregunta");
-        }
-        q.setQuestions(objectMapper.valueToTree(questions).toString());
+        q.setTitle(body.getTitle());
+        q.setDescription(body.getDescription());
+        q.setQuestions(objectMapper.valueToTree(body.getQuestions()).toString());
         q.setCreatedBy(principal.getUsername());
         q.setCreatedAt(LocalDateTime.now());
         questionnaireRepository.save(q);

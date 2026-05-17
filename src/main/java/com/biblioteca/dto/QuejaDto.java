@@ -1,17 +1,36 @@
 package com.biblioteca.dto;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 public class QuejaDto {
     private Integer id;
+
+    @NotBlank
+    @Size(max = 20)
     private String folio;
+
     private LocalDate fecha;
+
+    @NotBlank
+    @Size(max = 100)
     private String cliente;
+
+    @NotBlank
+    @Size(max = 200)
     private String motivo;
+
+    @Size(max = 4000)
     private String solucion;
+
+    @Size(max = 20)
     private String estado;
+
+    @Size(max = 255)
     private String solucionImagen;
+
     private LocalDateTime createdAt;
 
     public Integer getId() { return id; }

@@ -17,7 +17,9 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpHeaders;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
@@ -33,6 +35,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/auth")
+@Validated  // habilita validación en @RequestParam / @PathVariable
 public class AuthController {
 
     private final AuthService authService;
@@ -132,12 +135,12 @@ public class AuthController {
 
     @PostMapping("/setup-2fa")
     public ResponseEntity<Map<String, String>> setup2fa(@AuthenticationPrincipal UserPrincipal principal,
-                                                        @RequestBody(required = false) Map<String, String> body) {
+                                                        @Valid @RequestBody Setup2faRequest body) {
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
         // Require the current password before issuing a fresh secret — a
         // stolen access token alone shouldn't let an attacker take over 2FA.
-        requireCurrentPassword(user, body);
+        verifyCurrentPassword(user, body.getCurrentPassword());
         String secret = authService.setup2fa(user);
         String uri = authService.otpAuthUri(user.getUsername(), secret);
         Map<String, String> resp = new HashMap<>();
@@ -149,18 +152,17 @@ public class AuthController {
 
     @PostMapping("/confirm-2fa")
     public ResponseEntity<Map<String, String>> confirm2fa(@AuthenticationPrincipal UserPrincipal principal,
-                                                          @RequestBody Map<String, String> body,
+                                                          @Valid @RequestBody Confirm2faRequest body,
                                                           HttpServletRequest req) {
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
-        requireCurrentPassword(user, body);
-        authService.verifyAndEnable2fa(user, body.get("code"), body.get("secret"));
+        verifyCurrentPassword(user, body.getCurrentPassword());
+        authService.verifyAndEnable2fa(user, body.getCode(), body.getSecret());
         auditService.log(user.getUsername(), "2FA activado", req.getRemoteAddr());
         return ResponseEntity.ok(Map.of("message", "2FA activado correctamente"));
     }
 
-    private void requireCurrentPassword(User user, Map<String, String> body) {
-        String current = body == null ? null : body.get("currentPassword");
+    private void verifyCurrentPassword(User user, String current) {
         if (current == null || current.isBlank()) {
             throw ApiException.badRequest("Ingresa tu contraseña actual");
         }
@@ -170,23 +172,14 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<Map<String, String>> register(@RequestBody Map<String, String> body, HttpServletRequest req,
+    public ResponseEntity<Map<String, String>> register(@Valid @RequestBody RegisterRequest body,
+                                                        HttpServletRequest req,
                                                         @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireSuperAdmin(principal);
 
-        String username = body.get("username");
-        String password = body.get("password");
-        String role = body.getOrDefault("role", Permissions.ROLE_USER);
+        String username = body.getUsername();
+        String role = body.getRole() != null && !body.getRole().isBlank() ? body.getRole() : Permissions.ROLE_USER;
 
-        if (username == null || username.isBlank() || password == null || password.isBlank()) {
-            throw ApiException.badRequest("Usuario y contraseña son requeridos");
-        }
-        if (username.length() > 80) {
-            throw ApiException.badRequest("Usuario demasiado largo (máx 80)");
-        }
-        if (password.length() < 8) {
-            throw ApiException.badRequest("La contraseña debe tener al menos 8 caracteres");
-        }
         if (!Permissions.VALID_ROLES.contains(role)) {
             throw ApiException.badRequest("Rol inválido: " + role);
         }
@@ -196,7 +189,7 @@ public class AuthController {
 
         User user = new User();
         user.setUsername(username);
-        user.setPasswordHash(passwordEncoder.encode(password));
+        user.setPasswordHash(passwordEncoder.encode(body.getPassword()));
         user.setRole(role);
         userRepository.save(user);
         auditService.log(principal.getUsername(), "Creó usuario " + username, req.getRemoteAddr());
@@ -222,11 +215,11 @@ public class AuthController {
 
     @PostMapping("/profile")
     public ResponseEntity<UserDto> updateProfile(@AuthenticationPrincipal UserPrincipal principal,
-                                                 @RequestParam(required = false) String fullName,
-                                                 @RequestParam(required = false) String area,
-                                                 @RequestParam(required = false) String position,
-                                                 @RequestParam(required = false) String factory,
-                                                 @RequestParam(required = false) String contactInfo,
+                                                 @RequestParam(required = false) @Size(max = 150) String fullName,
+                                                 @RequestParam(required = false) @Size(max = 100) String area,
+                                                 @RequestParam(required = false) @Size(max = 100) String position,
+                                                 @RequestParam(required = false) @Size(max = 100) String factory,
+                                                 @RequestParam(required = false) @Size(max = 200) String contactInfo,
                                                  @RequestParam(required = false) MultipartFile profilePic) {
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
@@ -245,7 +238,7 @@ public class AuthController {
 
     @PostMapping("/change-password/{id}")
     public ResponseEntity<Map<String, String>> changePassword(@PathVariable Integer id,
-                                                              @RequestBody Map<String, String> body,
+                                                              @Valid @RequestBody ChangePasswordRequest body,
                                                               @AuthenticationPrincipal UserPrincipal principal,
                                                               HttpServletRequest req) {
         boolean self = principal.getId().equals(id);
@@ -262,23 +255,10 @@ public class AuthController {
 
         // Self-change: require current password — prevents takeover via stolen JWT.
         if (self) {
-            String current = body.get("currentPassword");
-            if (current == null || current.isBlank()) {
-                throw ApiException.badRequest("Ingresa tu contraseña actual");
-            }
-            if (!passwordEncoder.matches(current, user.getPasswordHash())) {
-                throw ApiException.unauthorized("Contraseña actual incorrecta");
-            }
+            verifyCurrentPassword(user, body.getCurrentPassword());
         }
 
-        String newPassword = body.get("newPassword");
-        if (newPassword == null || newPassword.isBlank()) {
-            throw ApiException.badRequest("La contraseña no puede estar vacía");
-        }
-        if (newPassword.length() < 8) {
-            throw ApiException.badRequest("La contraseña debe tener al menos 8 caracteres");
-        }
-        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        user.setPasswordHash(passwordEncoder.encode(body.getNewPassword()));
         user.setPasswordChangedAt(LocalDateTime.now());
         userRepository.save(user);
         sessions.invalidate(user.getId());   // bust the cache so the new pca takes effect immediately

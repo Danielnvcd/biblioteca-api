@@ -7,11 +7,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
+import jakarta.validation.ConstraintViolationException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -63,6 +66,38 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleMissingParam(MissingServletRequestParameterException e) {
         return ResponseEntity.badRequest()
                 .body(Map.of("error", "Falta parámetro: " + e.getParameterName()));
+    }
+
+    /** Bean Validation sobre @RequestParam / @PathVariable en controllers anotados con @Validated. */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleConstraintViolation(ConstraintViolationException e) {
+        Map<String, String> fields = e.getConstraintViolations().stream()
+                .collect(Collectors.toMap(
+                        v -> {
+                            String path = v.getPropertyPath().toString();
+                            int dot = path.lastIndexOf('.');
+                            return dot >= 0 ? path.substring(dot + 1) : path;
+                        },
+                        v -> v.getMessage() == null ? "inválido" : v.getMessage(),
+                        (a, b) -> a));
+        Map<String, Object> body = new HashMap<>();
+        body.put("error", "Datos inválidos");
+        body.put("fields", fields);
+        return ResponseEntity.badRequest().body(body);
+    }
+
+    /** JSON malformado o tipo incompatible — devuelve 400 en lugar del 500 que tiraba antes. */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleUnreadable(HttpMessageNotReadableException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", "JSON inválido"));
+    }
+
+    /** Spring tira NoResourceFoundException para rutas que no matchean ningún controller.
+     *  Sin este handler, el catch-all de Exception lo convertía en 500. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Recurso no encontrado"));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

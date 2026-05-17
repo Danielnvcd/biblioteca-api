@@ -86,7 +86,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        # prometheus se mantiene fuera para no exponer métricas operacionales
+        # (latencias, pool DB, endpoints) públicamente. Si se agrega un scraper,
+        # habilitarlo en un puerto interno o con autenticación separada.
+        include: health,info
   endpoint:
     health:
       show-details: when-authorized

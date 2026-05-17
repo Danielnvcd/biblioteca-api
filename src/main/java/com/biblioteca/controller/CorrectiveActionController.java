@@ -2,7 +2,9 @@ package com.biblioteca.controller;
 
 import com.biblioteca.dto.CorrectionActivityDto;
 import com.biblioteca.dto.CorrectiveActionDto;
+import com.biblioteca.dto.CreateActivityByFolioRequest;
 import com.biblioteca.dto.PagedResponse;
+import com.biblioteca.dto.UpdateActivityStatusRequest;
 import com.biblioteca.exception.ApiException;
 import com.biblioteca.model.CorrectionActivity;
 import com.biblioteca.model.CorrectiveAction;
@@ -16,7 +18,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import jakarta.validation.Valid;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -25,6 +29,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/acciones")
+@Validated
 public class CorrectiveActionController {
 
     private final CorrectiveActionRepository actionRepository;
@@ -45,7 +50,7 @@ public class CorrectiveActionController {
     }
 
     @PostMapping("/create")
-    public ResponseEntity<Map<String, String>> create(@RequestBody CorrectiveActionDto dto,
+    public ResponseEntity<Map<String, String>> create(@Valid @RequestBody CorrectiveActionDto dto,
                                                       @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
@@ -105,7 +110,7 @@ public class CorrectiveActionController {
 
     @PostMapping("/{id}/actividad")
     public ResponseEntity<Map<String, String>> addActivity(@PathVariable Integer id,
-                                                           @RequestBody CorrectionActivityDto dto,
+                                                           @Valid @RequestBody CorrectionActivityDto dto,
                                                            @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
         if (!actionRepository.existsById(id)) {
@@ -144,14 +149,14 @@ public class CorrectiveActionController {
 
     @PostMapping("/actividad/{id}/estatus")
     public ResponseEntity<Map<String, String>> updateActivityStatus(@PathVariable Integer id,
-                                                                    @RequestBody Map<String, String> body,
+                                                                    @Valid @RequestBody UpdateActivityStatusRequest body,
                                                                     @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
         CorrectionActivity act = activityRepository.findById(id)
                 .orElseThrow(() -> ApiException.notFound("Actividad no encontrada"));
-        if (body.get("estatus") != null) act.setEstatus(body.get("estatus"));
-        if (body.get("observaciones") != null) act.setObservaciones(body.get("observaciones"));
+        if (body.getEstatus() != null) act.setEstatus(body.getEstatus());
+        if (body.getObservaciones() != null) act.setObservaciones(body.getObservaciones());
         activityRepository.save(act);
         return ResponseEntity.ok(Map.of("message", "Estatus actualizado"));
     }
@@ -161,26 +166,20 @@ public class CorrectiveActionController {
      * Mirrors Flask's /acciones/actividad/crear_global.
      */
     @PostMapping("/actividad/crear-global")
-    public ResponseEntity<Map<String, String>> createActivityByFolio(@RequestBody Map<String, String> body,
+    public ResponseEntity<Map<String, String>> createActivityByFolio(@Valid @RequestBody CreateActivityByFolioRequest body,
                                                                       @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
-        String folio = body.get("folio");
-        if (folio == null || folio.isBlank()) {
-            throw ApiException.badRequest("El folio es requerido");
-        }
-        CorrectiveAction action = actionRepository.findByFolio(folio)
-                .orElseThrow(() -> ApiException.notFound("No se encontró ninguna acción correctiva con folio " + folio));
+        CorrectiveAction action = actionRepository.findByFolio(body.getFolio())
+                .orElseThrow(() -> ApiException.notFound("No se encontró ninguna acción correctiva con folio " + body.getFolio()));
 
         CorrectionActivity act = new CorrectionActivity();
         act.setActionId(action.getId());
-        act.setDescripcion(body.get("descripcion"));
-        act.setResponsable(body.get("responsable"));
-        String fechaStr = body.get("fechaCompromiso");
-        act.setFechaCompromiso(fechaStr != null && !fechaStr.isBlank()
-                ? LocalDate.parse(fechaStr) : LocalDate.now());
+        act.setDescripcion(body.getDescripcion());
+        act.setResponsable(body.getResponsable());
+        act.setFechaCompromiso(body.getFechaCompromiso() != null ? body.getFechaCompromiso() : LocalDate.now());
         act.setEstatus("Pendiente");
-        act.setObservaciones(body.get("observaciones"));
+        act.setObservaciones(body.getObservaciones());
         activityRepository.save(act);
         return ResponseEntity.ok(Map.of("message", "Actividad agregada"));
     }

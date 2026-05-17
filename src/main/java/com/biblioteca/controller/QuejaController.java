@@ -14,8 +14,10 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.validation.Valid;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -25,6 +27,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/quejas")
+@Validated
 public class QuejaController {
 
     private final QuejaRepository quejaRepository;
@@ -48,7 +51,7 @@ public class QuejaController {
     }
 
     @PostMapping("/create")
-    public ResponseEntity<Map<String, String>> create(@RequestBody QuejaDto dto,
+    public ResponseEntity<Map<String, String>> create(@Valid @RequestBody QuejaDto dto,
                                                       @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 

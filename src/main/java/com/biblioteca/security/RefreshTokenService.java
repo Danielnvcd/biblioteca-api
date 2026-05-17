@@ -111,9 +111,18 @@ public class RefreshTokenService {
         next.setUserAgent(truncate(userAgent, 200));
         repo.save(next);
 
-        current.setRevokedAt(now);
-        current.setReplacedBy(next.getId());
-        repo.save(current);
+        // Atomic revoke: if two requests present the same valid refresh token
+        // simultaneously, only one wins. The loser sees 0 rows affected,
+        // deletes its orphan successor, and treats the situation as reuse.
+        int rows = repo.markRevokedIfActive(current.getId(), now, next.getId());
+        if (rows == 0) {
+            repo.delete(next);
+            Integer userId = current.getUserId();
+            log.warn("Refresh token rotation race detected for userId={}. Revoking all active tokens.", userId);
+            newTxTemplate.executeWithoutResult(status ->
+                    repo.revokeAllActiveForUser(userId, LocalDateTime.now()));
+            throw ApiException.unauthorized("Sesión inválida, vuelve a iniciar sesión");
+        }
 
         return new Rotated(newRaw, current.getUserId());
     }

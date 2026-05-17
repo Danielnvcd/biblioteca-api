@@ -19,7 +19,7 @@ public class User {
     @Column(length = 20)
     private String role = "user";
 
-    @Column(name = "totp_secret", length = 32)
+    @Column(name = "totp_secret", columnDefinition = "TEXT")
     private String totpSecret;
 
     @Column(name = "full_name", length = 150)

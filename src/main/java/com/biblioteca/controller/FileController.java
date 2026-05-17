@@ -24,12 +24,17 @@ public class FileController {
     /**
      * Categorías que pueden ser servidas sin autenticación. Solo las que el
      * frontend renderiza con <img src=...> directo (que no puede llevar
-     * Authorization header). Todo lo demás exige JWT — los downloads de docs,
-     * manuales, cursos y lecciones pasan por axios y sí pueden adjuntar el
-     * header automáticamente.
+     * Authorization header) Y cuyo contenido es genuinamente público:
+     *   - perfiles: fotos de avatar
+     *   - boletin: imágenes del newsletter interno (visibles a cualquier user)
+     *   - seguridad: avisos de seguridad de la empresa
+     *
+     * Categorías con datos sensibles (quejas, almacenes, etc.) NO van aquí —
+     * el frontend debe descargarlas vía axios autenticado y convertirlas a
+     * blob URL para mostrarlas en <img>.
      */
     private static final Set<String> PUBLIC_CATEGORIES = Set.of(
-            "perfiles", "boletin", "quejas", "seguridad");
+            "perfiles", "boletin", "seguridad");
     /** Sub-conjunto de no-públicas que además requieren rol específico. */
     private static final Set<String> ROLE_RESTRICTED = Set.of("almacenes");
 
