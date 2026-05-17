@@ -19,8 +19,11 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -28,6 +31,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/content")
+@Validated
 public class ContentController {
 
     private final ContentRepository contentRepository;
@@ -95,9 +99,9 @@ public class ContentController {
     public ResponseEntity<ContentDto> upload(
             @PathVariable String category,
             @RequestParam("file") MultipartFile file,
-            @RequestParam("titulo") String title,
-            @RequestParam(required = false) String descripcion,
-            @RequestParam(required = false) String manualCategory,
+            @RequestParam("titulo") @NotBlank @Size(max = 150) String title,
+            @RequestParam(required = false) @Size(max = 4000) String descripcion,
+            @RequestParam(required = false) @Size(max = 50) String manualCategory,
             @AuthenticationPrincipal UserPrincipal principal) {
 
         Permissions.requireUploadFor(principal, category);
@@ -105,7 +109,7 @@ public class ContentController {
         String filename = fileStorageService.store(file, category);
         Content content = new Content();
         content.setId(UUID.randomUUID().toString());
-        content.setTitle(title.length() > 150 ? title.substring(0, 150) : title);
+        content.setTitle(title);
         content.setDescription(descripcion);
         content.setFilename(filename);
         content.setCategory(category);
@@ -138,21 +142,13 @@ public class ContentController {
         return ResponseEntity.ok(Map.of("message", "Eliminado correctamente"));
     }
 
-    private static final int COMMENT_MAX_LENGTH = 1000;
     private static final java.util.Set<String> COMMENTABLE_CATEGORIES =
             java.util.Set.of("boletin", "lecciones");
 
     @PostMapping("/{contentId}/comment")
     public ResponseEntity<Map<String, String>> addComment(@PathVariable String contentId,
-                                                          @RequestParam String text,
+                                                          @RequestParam @NotBlank @Size(max = 1000) String text,
                                                           @AuthenticationPrincipal UserPrincipal principal) {
-        if (text == null || text.isBlank()) {
-            throw ApiException.badRequest("El comentario no puede estar vacío");
-        }
-        if (text.length() > COMMENT_MAX_LENGTH) {
-            throw ApiException.badRequest(
-                    "El comentario es demasiado largo (máx " + COMMENT_MAX_LENGTH + " caracteres)");
-        }
         Content content = contentRepository.findById(contentId)
                 .orElseThrow(() -> ApiException.notFound("Contenido no encontrado"));
         if (!COMMENTABLE_CATEGORIES.contains(content.getCategory().toLowerCase())) {

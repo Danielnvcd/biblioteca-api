@@ -9,7 +9,7 @@ Spring Boot 3.2 / Java 17 backend para la plataforma corporativa Maxipet (migrac
 - **JWT** (jjwt 0.12) con scope `access` / `2fa-pending` (15min) + refresh rotativo (7d) en cookie httpOnly
 - **Bucket4j 8.14** (rate-limit; memory por defecto, Redis opt-in)
 - **AES-256-GCM** para secretos sensibles en BD (TOTP)
-- **Micrometer + Prometheus** (`/actuator/prometheus`)
+- **Micrometer + Prometheus** (`/actuator/prometheus` deshabilitado por defecto en `management.endpoints.web.exposure.include`)
 - **Logback JSON** en prod (LogstashEncoder), texto en dev
 - **ZXing** (QR para setup 2FA)
 
@@ -112,20 +112,28 @@ El contenedor monta volumen `uploads` (persistente) y corre como usuario no-root
 ### Health & métricas (prod)
 - `GET /actuator/health` — público, devuelve solo `UP`/`DOWN`.
 - `GET /actuator/info` — público, vacío por defecto.
-- `GET /actuator/prometheus` — público, métricas Micrometer en formato Prometheus. Scrapea con Prometheus dentro de la red interna. Las métricas incluyen `application=biblioteca-api` como tag.
+- `GET /actuator/prometheus` — **NO expuesto**. El endpoint fue removido de `management.endpoints.web.exposure.include` para no filtrar métricas operacionales (latencias, pool DB, endpoints) a la red pública. Si se monta un scraper de Prometheus en el futuro, habilitarlo en un puerto interno (`management.server.port`) o detrás de basic auth.
 
 ## Observabilidad
 
 ### Métricas
-Micrometer expone JVM, Hikari, HTTP server, Spring Security y métricas de aplicación. Para scrapear con Prometheus:
+Micrometer está en el classpath y registra JVM, Hikari, HTTP server, Spring Security y métricas de aplicación, pero el endpoint `/actuator/prometheus` **NO está expuesto** por defecto para evitar leaks operacionales públicos.
+
+Si necesitas habilitarlo para un scraper interno:
+
+1. Agregar `prometheus` a `management.endpoints.web.exposure.include` en `application-prod.yml`.
+2. Restringirlo en uno de tres niveles:
+   - **Puerto separado**: `management.server.port=9090` y exponer ese puerto solo a la red interna.
+   - **Basic auth**: añadir un `SecurityFilterChain` específico para `/actuator/**`.
+   - **Cloudflare WAF**: si se expone por el dominio público, bloquear `/actuator/prometheus` excepto desde IPs del scraper.
 
 ```yaml
-# prometheus.yml
+# prometheus.yml (asumiendo que ya habilitaste el endpoint)
 scrape_configs:
   - job_name: 'biblioteca-api'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['biblioteca-api.internal:8080']
+      - targets: ['biblioteca-api.internal:9090']  # puerto interno separado
 ```
 
 ### Logs estructurados
@@ -139,6 +147,46 @@ Cada request entrante recibe un `X-Request-Id`:
 
 El id viaja en MDC durante toda la request, aparece en cada línea de log emitida, y se devuelve al cliente en el header `X-Request-Id` de la respuesta. Útil para soporte: el usuario cita el id de una alerta y lo correlacionas en los logs.
 
+## Hardening reciente (2026-05-17)
+
+Una pasada de revisión pre-producción cubrió los siguientes puntos. Para detalle de los cambios, ver el git log.
+
+### Auth y datos sensibles
+- **TOTP secret**: la columna pasó de `VARCHAR(32)` a `TEXT` (migración `V5`). Antes el ciphertext AES-GCM no cabía y la activación de 2FA fallaba al guardar.
+- **Refresh token rotation atómica**: `RefreshTokenService.rotate()` ahora revoca el token entrante con un `UPDATE ... WHERE id=? AND revoked_at IS NULL`. Si dos requests llegan a la vez con el mismo refresh, solo uno gana; el otro detecta `rowsAffected=0`, elimina el sucesor huérfano que ya emitió, y revoca toda la familia del usuario (lo trata como reuso).
+- **`APP_ENCRYPTION_KEY` en `docker-compose.yml`**: agregado con `${APP_ENCRYPTION_KEY:?...}` para fallar rápido si falta.
+
+### Endpoints y acceso a archivos
+- **`/actuator/prometheus`**: removido del `include` y del `permitAll`. Ya no filtra métricas operacionales públicamente.
+- **`quejas`**: removido de `PUBLIC_CATEGORIES` en `FileController`. La evidencia ahora requiere JWT y el frontend la baja vía `useAuthenticatedImage` (blob URL).
+
+### Validación de entrada (Bean Validation)
+- **DTOs de request anotados** con `@NotBlank`/`@Size`/`@Pattern`: `QuejaDto`, `SeguridadDto`, `CorrectiveActionDto`, `CorrectionActivityDto`, `KpiDto`, `ObjetivoDto`.
+- **Nuevos DTOs** que reemplazaron `Map<String,String>` en auth/cuestionarios/acciones: `RegisterRequest`, `ChangePasswordRequest`, `Setup2faRequest`, `Confirm2faRequest`, `CreateCuestionarioRequest`, `CreateActivityByFolioRequest`, `UpdateActivityStatusRequest`.
+- **`@Validated` a nivel clase** en los controllers que reciben `@RequestParam` con `@Size` (Auth, Queja, Seguridad, CorrectiveAction, Content).
+- **Tamaños alineados al schema**: 80 username, 200 password hash, 100 cliente/origen/reporta, 200 motivo, 4000 textos libres, 50 folio, 20 nivel/estado/role, etc.
+- **`ContentController.upload`**: ya no trunca el título silenciosamente; valida con `@Size(max=150)` y devuelve 400 si excede.
+- **`SeguridadController.responder`**: valida `Map.size() ≤ 100`, key ≤ 200 chars, value ≤ 4000 chars. Cierra el vector de POST gigante con keys arbitrarias.
+
+### Manejo de errores
+- **`GlobalExceptionHandler`** ahora cubre:
+  - `ConstraintViolationException` (params/path con `@Size`) → 400 con `fields:{...}`.
+  - `HttpMessageNotReadableException` (JSON malformado) → 400 `"JSON inválido"`.
+  - `NoResourceFoundException` (ruta inexistente) → 404 (antes caía en el catch-all de `Exception` y devolvía 500).
+- **`AuditService.log`**: si falla el insert, ahora se loggea `ERROR` (no `WARN`). Los dashboards de prod típicamente filtran WARN; un hueco en la bitácora debe alertar.
+
+### Tests automáticos
+- `src/test/java/com/biblioteca/security/EncryptionServiceTest.java` (9 tests): round-trip, prefijo `gcm:`, IV aleatorio, passthrough legacy plaintext, ciphertext malformado, validación de key.
+- `src/test/java/com/biblioteca/security/RefreshTokenServiceTest.java` (9 tests): issue + hash correcto, rotación normal, reuse detection, expiración, hash desconocido, **lost-race deletes orphan + revokes family**, revoke variantes.
+
+`mvn test` ejecuta los 18 tests en <3s y debe ser parte del pipeline pre-merge.
+
+### Consistencia y limpieza menor
+- `ProdSecretsValidator` usa `equals` (no `equalsIgnoreCase`) en todas las comparaciones de fallback dev.
+- `JwtTokenProvider` declara explícitamente `Jwts.SIG.HS512` en `signWith`, eliminando dependencia de la selección automática por longitud de la key.
+
+---
+
 ## Seguridad implementada
 
 - JWT con `scope`: `access` para uso normal, `2fa-pending` (5 min) sólo para `/verify-2fa`. El filter rechaza step tokens fuera de ese endpoint.
@@ -150,7 +198,7 @@ El id viaja en MDC durante toda la request, aparece en cada línea de log emitid
 - **Path-traversal protegido** en `FileStorageService` (whitelist categorías + sanitize + `normalize().startsWith(root)`).
 - **Validación por extensión + magic bytes** del contenido (PDF, PNG, JPEG, OOXML/OLE, audio, video). Rechaza un `.exe` renombrado a `.pdf`.
 - **MIME whitelist** para servir, `X-Content-Type-Options: nosniff`.
-- **Acceso a archivos**: solo `perfiles`, `boletin`, `quejas`, `seguridad` son públicos (necesarios para `<img src>`). `documentos`, `manuales`, `cursos`, `lecciones`, `almacenes` exigen JWT. `almacenes` adicionalmente exige rol.
+- **Acceso a archivos**: solo `perfiles`, `boletin`, `seguridad` son públicos (necesarios para `<img src>` con contenido genuinamente difundible). `quejas` pasó a privado (la evidencia puede contener datos de cliente); el frontend la baja como blob URL vía `useAuthenticatedImage`. `documentos`, `manuales`, `cursos`, `lecciones`, `almacenes` exigen JWT. `almacenes` adicionalmente exige rol. Ver el javadoc de `PUBLIC_CATEGORIES` en `FileController` para la política de qué subir a cada categoría pública.
 - **Comentarios**: máx 1000 chars + validan que el content exista y que la categoría sea `boletin`/`lecciones`.
 - **Mass-assignment** evitado con DTOs sin `id` para KPI/Objetivo.
 - **Video URLs** solo `https://` (mitiga mixed-content y tampering en tránsito).
@@ -186,6 +234,7 @@ ORDER BY installed_rank;
 | `V2__seed_default_data.sql` | 30 categorías de contenido (idempotente con `WHERE NOT EXISTS`) |
 | `V3__refresh_tokens.sql` | Tabla `refresh_tokens` para el flujo de access+refresh |
 | `V4__cascades_and_unique.sql` | `ON DELETE CASCADE` en FKs problemáticas + `UNIQUE(questionnaire_id, user_name)` |
+| `V5__totp_secret_text.sql` | `users.totp_secret` cambia de `VARCHAR(32)` a `TEXT` para alojar el payload AES-256-GCM cifrado (`gcm:<iv>:<ct>`). Sin este cambio el activar 2FA fallaba al persistir el secreto. |
 
 ### Primer arranque en una BD que ya existe (prod, dev actual)
 
@@ -306,10 +355,10 @@ ingress:
 
 ## Endurecimiento adicional (recomendado en Cloudflare)
 
-- **Bloquear `/actuator/prometheus`** en Cloudflare WAF — exponerlo internamente para tu scraper, no por Cloudflare.
 - **Rate-limit a nivel del edge** en `/api/auth/login` y `/api/auth/refresh` (10 req/min por IP). Tu rate-limit Bucket4j sigue siendo defensa adicional.
 - **WAF managed rules** activadas (OWASP CRS).
 - **Bot Fight Mode** o **Bot Management**.
+- **`/actuator/prometheus` no se expone en la app**, por lo que no requiere regla específica en el WAF. Si lo habilitas para scrapear internamente, considera ponerlo en un puerto separado (`management.server.port`) que no salga por Cloudflare.
 
 ## Smoke test post-deploy
 

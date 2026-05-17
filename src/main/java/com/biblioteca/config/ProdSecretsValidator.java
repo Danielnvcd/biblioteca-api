@@ -46,7 +46,9 @@ public class ProdSecretsValidator {
 
     @PostConstruct
     void validate() {
-        if (DEV_JWT_SECRET.equalsIgnoreCase(jwtSecret)) {
+        // equals (no equalsIgnoreCase) — el dev fallback es hex case-sensitive
+        // y cualquier variación en el valor real cuenta como secreto distinto.
+        if (DEV_JWT_SECRET.equals(jwtSecret)) {
             throw new IllegalStateException(
                 "JWT_SECRET is the dev fallback while running prod profile. "
               + "Generate one with `openssl rand -base64 64` and set JWT_SECRET.");

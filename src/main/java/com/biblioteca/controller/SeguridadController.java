@@ -207,12 +207,33 @@ public class SeguridadController {
         return ResponseEntity.ok(Map.of("message", "Cuestionario creado"));
     }
 
+    /** Tamaños máximos para respuestas de cuestionario. Las keys son dinámicas
+     *  (dependen de las preguntas del cuestionario) así que no podemos usar
+     *  Bean Validation directamente sobre Map; validamos manualmente. */
+    private static final int MAX_ANSWERS = 100;
+    private static final int MAX_ANSWER_KEY_LEN = 200;
+    private static final int MAX_ANSWER_VALUE_LEN = 4000;
+
     @PostMapping("/cuestionario/{id}/responder")
     public ResponseEntity<Map<String, String>> responder(@PathVariable Integer id,
                                                          @RequestBody Map<String, String> answers,
                                                          @AuthenticationPrincipal UserPrincipal principal) {
         if (!questionnaireRepository.existsById(id)) {
             throw ApiException.notFound("Cuestionario no encontrado");
+        }
+        if (answers == null || answers.isEmpty()) {
+            throw ApiException.badRequest("Debes responder al menos una pregunta");
+        }
+        if (answers.size() > MAX_ANSWERS) {
+            throw ApiException.badRequest("Demasiadas respuestas (máx " + MAX_ANSWERS + ")");
+        }
+        for (Map.Entry<String, String> e : answers.entrySet()) {
+            if (e.getKey() != null && e.getKey().length() > MAX_ANSWER_KEY_LEN) {
+                throw ApiException.badRequest("Identificador de pregunta demasiado largo");
+            }
+            if (e.getValue() != null && e.getValue().length() > MAX_ANSWER_VALUE_LEN) {
+                throw ApiException.badRequest("Respuesta demasiado larga (máx " + MAX_ANSWER_VALUE_LEN + " caracteres)");
+            }
         }
         // One response per user per questionnaire — prevents spam / duplicates.
         if (responseRepository.existsByQuestionnaireIdAndUserName(id, principal.getUsername())) {

@@ -69,8 +69,12 @@ app:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:false}
-    # "memory" (default) for single-instance; "redis" when running multiple
-    # instances behind a load balancer so buckets are shared.
+    # backend=memory está bien con UNA sola instancia. Si se despliegan varias
+    # detrás de un load balancer, cada instancia mantiene su propio contador y
+    # el límite efectivo se multiplica por N. En ese caso usar:
+    #   RATE_LIMIT_BACKEND=redis
+    #   SPRING_REDIS_HOST=...  SPRING_REDIS_PORT=6379
+    # Ver RateLimitConfig para los buckets aplicados (login/2fa/register).
     backend: ${RATE_LIMIT_BACKEND:memory}
 
 spring.data.web.pageable:

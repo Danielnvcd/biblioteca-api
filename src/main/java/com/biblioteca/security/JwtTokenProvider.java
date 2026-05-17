@@ -33,7 +33,7 @@ public class JwtTokenProvider {
                 .claim("scope", "access")
                 .issuedAt(now)
                 .expiration(expiry)
-                .signWith(secretKey)
+                .signWith(secretKey, Jwts.SIG.HS512)
                 .compact();
     }
 
@@ -53,7 +53,7 @@ public class JwtTokenProvider {
                 .claim("remember", remember)
                 .issuedAt(now)
                 .expiration(expiry)
-                .signWith(secretKey)
+                .signWith(secretKey, Jwts.SIG.HS512)
                 .compact();
     }
 

@@ -54,3 +54,7 @@ app:
     initial-password: ${ADMIN_INITIAL_PASSWORD:}
   rate-limit:
     enabled: true
+    # IMPORTANTE: si esta app corre con más de una instancia en prod, setear
+    # RATE_LIMIT_BACKEND=redis (con SPRING_REDIS_HOST configurado). Con backend
+    # memory (default) cada instancia tiene su propio contador y el límite
+    # efectivo se vuelve N × el configurado, debilitando la protección.

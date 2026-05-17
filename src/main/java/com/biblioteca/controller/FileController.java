@@ -22,16 +22,33 @@ import java.util.concurrent.TimeUnit;
 public class FileController {
 
     /**
-     * Categorías que pueden ser servidas sin autenticación. Solo las que el
-     * frontend renderiza con <img src=...> directo (que no puede llevar
-     * Authorization header) Y cuyo contenido es genuinamente público:
-     *   - perfiles: fotos de avatar
-     *   - boletin: imágenes del newsletter interno (visibles a cualquier user)
-     *   - seguridad: avisos de seguridad de la empresa
+     * Categorías que pueden ser servidas sin autenticación. Cumplen DOS
+     * condiciones simultáneamente:
+     *   1. El frontend las renderiza con `<img src=...>` directo, que no
+     *      puede mandar Authorization header.
+     *   2. El contenido es genuinamente difundible dentro de la empresa.
      *
-     * Categorías con datos sensibles (quejas, almacenes, etc.) NO van aquí —
-     * el frontend debe descargarlas vía axios autenticado y convertirlas a
-     * blob URL para mostrarlas en <img>.
+     * Política de subida por categoría:
+     *
+     *   perfiles  → fotos de avatar de usuarios. NO incluir documentos
+     *               personales, INE, CURP, comprobantes de domicilio, ni
+     *               nada que identifique al usuario fuera del nombre.
+     *
+     *   boletin   → imágenes del newsletter interno. NO incluir datos de
+     *               clientes, números de empleado, salarios, ni evidencia
+     *               de incidentes.
+     *
+     *   seguridad → avisos generales (cartelería, infografías, manuales
+     *               sin datos personales). NO incluir reportes de incidentes
+     *               con nombres de personas o ubicaciones específicas.
+     *
+     * Toda categoría con datos sensibles (quejas con evidencia de cliente,
+     * almacenes con info operativa, etc.) NO va aquí. El frontend debe
+     * descargarlas vía axios autenticado y convertirlas a blob URL para
+     * mostrarlas — ver useAuthenticatedImage en biblioteca-frontend.
+     *
+     * Antes de agregar una nueva categoría a este set, validar contra ambos
+     * criterios. Si tienes dudas, déjala fuera y usa el patrón de blob URL.
      */
     private static final Set<String> PUBLIC_CATEGORIES = Set.of(
             "perfiles", "boletin", "seguridad");

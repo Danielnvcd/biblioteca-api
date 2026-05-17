@@ -38,7 +38,11 @@ public class AuditService {
             log.setCreatedAt(LocalDateTime.now());
             auditLogRepository.save(log);
         } catch (Exception e) {
-            logger.warn("Audit log failed for user={} action={}: {}", user, action, e.getMessage());
+            // ERROR (no WARN) — auditoría rota es señal operacional crítica que
+            // los dashboards de prod NO deben filtrar. La operación de negocio
+            // ya pasó en otra tx; aquí solo se trata de no romperla, pero el
+            // hueco en la bitácora SÍ debe alertar a alguien.
+            logger.error("Audit log failed for user={} action={}: {}", user, action, e.getMessage(), e);
         }
     }
 
