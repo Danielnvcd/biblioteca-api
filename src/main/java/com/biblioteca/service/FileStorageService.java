@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import javax.imageio.ImageIO;
 import java.awt.Graphics2D;
-import java.awt.Image;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.File;
 
@@ -110,16 +110,30 @@ public class FileStorageService {
         }
     }
 
-    
+    private static final int THUMB_WIDTH = 400;
+
+    /**
+     * Devuelve el path del thumbnail (400px de ancho, JPG). Lo genera la
+     * primera vez que se pide; las siguientes lo lee del disco.
+     *
+     * - Sync por path interno para que dos requests concurrentes sobre el
+     *   mismo archivo no se pisen al escribir (antes generaban .thumb.jpg
+     *   corruptos).
+     * - Escribe a *.tmp y mueve atómico, así un lector concurrente nunca ve
+     *   un archivo a medio escribir.
+     * - Downscale multi-step con Graphics2D + BILINEAR. Sustituye al viejo
+     *   getScaledInstance(SCALE_SMOOTH), que era ~10× más lento y de peor
+     *   calidad (era el origen del lag al cargar grids con muchas imágenes).
+     */
     public Path getThumbnailPath(String category, String filename) {
         Path originalPath = resolvePath(category, filename);
         if (!Files.exists(originalPath)) {
             return originalPath; // Let it 404 naturally
         }
-        
+
         String ext = extensionOf(filename).toLowerCase(Locale.ROOT);
         if (!Arrays.asList("jpg", "jpeg", "png", "gif", "bmp").contains(ext)) {
-            return originalPath; // Thumbnails not natively supported for WebP/HEIC by ImageIO without plugins
+            return originalPath; // ImageIO no soporta WebP/HEIC sin plugins
         }
 
         Path thumbPath = originalPath.getParent().resolve(originalPath.getFileName().toString() + ".thumb.jpg");
@@ -127,26 +141,68 @@ public class FileStorageService {
             return thumbPath;
         }
 
-        // Generate thumbnail
-        try {
-            File originalFile = originalPath.toFile();
-            BufferedImage originalImage = ImageIO.read(originalFile);
-            if (originalImage == null) return originalPath;
+        // intern() garantiza que dos requests con el mismo path obtienen el mismo
+        // monitor — no Lock por archivo en un Map (overkill para el volumen actual).
+        synchronized (("thumb-lock:" + thumbPath).intern()) {
+            // Re-check: otro hilo pudo haberlo generado mientras esperábamos el lock.
+            if (Files.exists(thumbPath)) {
+                return thumbPath;
+            }
+            try {
+                BufferedImage original = ImageIO.read(originalPath.toFile());
+                if (original == null) return originalPath;
 
-            int targetWidth = 400;
-            int targetHeight = (int) (originalImage.getHeight() * ((double) targetWidth / originalImage.getWidth()));
-            if (targetHeight <= 0) targetHeight = 1;
+                BufferedImage thumb = highQualityScale(original, THUMB_WIDTH);
 
-            BufferedImage thumbImage = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB);
-            Graphics2D g2d = thumbImage.createGraphics();
-            g2d.drawImage(originalImage.getScaledInstance(targetWidth, targetHeight, Image.SCALE_SMOOTH), 0, 0, null);
-            g2d.dispose();
-
-            ImageIO.write(thumbImage, "jpg", thumbPath.toFile());
-            return thumbPath;
-        } catch (Exception e) {
-            return originalPath; // Fallback to original if thumbnail generation fails
+                // Escribir a temporal y mover atómico — un GET concurrente jamás
+                // ve un .thumb.jpg a medio escribir.
+                Path tmp = thumbPath.resolveSibling(thumbPath.getFileName() + ".tmp");
+                if (!ImageIO.write(thumb, "jpg", tmp.toFile())) {
+                    Files.deleteIfExists(tmp);
+                    return originalPath;
+                }
+                Files.move(tmp, thumbPath,
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                return thumbPath;
+            } catch (Exception e) {
+                return originalPath;
+            }
         }
+    }
+
+    /**
+     * Downscale multi-step: cada iteración reduce a la mitad hasta acercarse
+     * al ancho objetivo. Es la receta clásica (Chris Campbell) para evitar el
+     * aliasing que produce un único drawImage a tamaño chico, manteniendo
+     * tiempos de ~50-200 ms para fotos grandes.
+     */
+    private static BufferedImage highQualityScale(BufferedImage source, int targetWidth) {
+        int w = source.getWidth();
+        int h = source.getHeight();
+        if (w <= targetWidth) {
+            return source; // no upscale
+        }
+        int targetHeight = Math.max(1, (int) Math.round(h * ((double) targetWidth / w)));
+
+        BufferedImage current = source;
+        int curW = w, curH = h;
+        while (curW > targetWidth * 2) {
+            curW = Math.max(targetWidth, curW / 2);
+            curH = Math.max(targetHeight, curH / 2);
+            current = scaleStep(current, curW, curH);
+        }
+        return scaleStep(current, targetWidth, targetHeight);
+    }
+
+    private static BufferedImage scaleStep(BufferedImage src, int w, int h) {
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = out.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.drawImage(src, 0, 0, w, h, null);
+        g.dispose();
+        return out;
     }
 
     public Path getPath(String category, String filename) {
