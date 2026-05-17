@@ -35,6 +35,11 @@ services:
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in .env (openssl rand -base64 32)}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       RATE_LIMIT_ENABLED: "true"
+      # Sólo se usa en el PRIMER arranque (BD sin usuario admin). Si está vacío
+      # o no está seteado, DataInitializer no crea el admin y loggea un warning.
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
+      # Sólo poner =true en el .env si REALMENTE corrés Redis (RATE_LIMIT_BACKEND=redis).
+      MANAGEMENT_HEALTH_REDIS_ENABLED: ${MANAGEMENT_HEALTH_REDIS_ENABLED:-false}
     volumes:
       - uploads:/app/uploads
     ports:
