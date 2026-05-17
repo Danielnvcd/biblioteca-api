@@ -2,7 +2,7 @@ package com.biblioteca.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.bucket4j.Bandwidth;
-import io.github.bucket4j.Bucket;
+import io.github.bucket4j.BucketConfiguration;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,13 +15,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * IP-based rate limiter for sensitive auth endpoints. Bucket4j in-memory
- * (process-local). For multi-instance prod, swap to a distributed backend
- * (Redis) — interface stays the same.
+ * IP-based rate limiter for sensitive auth endpoints. Backend (memory or
+ * Redis) is selected via {@code app.rate-limit.backend}; this filter just
+ * delegates the consume() to whichever {@link RateLimitStore} is wired in.
  *
  * Buckets per endpoint:
  *   /api/auth/login       → 8 req / minute / IP
@@ -33,29 +32,31 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final boolean enabled;
     private final ObjectMapper mapper;
+    private final RateLimitStore store;
 
     public RateLimitFilter(@Value("${app.rate-limit.enabled:false}") boolean enabled,
-                           ObjectMapper mapper) {
+                           ObjectMapper mapper,
+                           RateLimitStore store) {
         this.enabled = enabled;
         this.mapper = mapper;
+        this.store = store;
     }
 
-    private record Rule(String pathSuffix, Supplier<Bucket> bucketFactory) {}
+    private record Rule(String pathSuffix, Supplier<BucketConfiguration> configSupplier) {}
 
     private final Rule[] rules = new Rule[] {
-            new Rule("/api/auth/login",      () -> bucket(8,  Duration.ofMinutes(1))),
-            new Rule("/api/auth/verify-2fa", () -> bucket(8,  Duration.ofMinutes(1))),
-            new Rule("/api/auth/register",   () -> bucket(20, Duration.ofHours(1))),
+            new Rule("/api/auth/login",      () -> config(8,  Duration.ofMinutes(1))),
+            new Rule("/api/auth/verify-2fa", () -> config(8,  Duration.ofMinutes(1))),
+            new Rule("/api/auth/register",   () -> config(20, Duration.ofHours(1))),
     };
 
-    /** key = ip + "|" + rule index. */
-    private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
-
-    private static Bucket bucket(long capacity, Duration window) {
-        return Bucket.builder().addLimit(Bandwidth.builder()
-                .capacity(capacity)
-                .refillIntervally(capacity, window)
-                .build()).build();
+    private static BucketConfiguration config(long capacity, Duration window) {
+        return BucketConfiguration.builder()
+                .addLimit(Bandwidth.builder()
+                        .capacity(capacity)
+                        .refillIntervally(capacity, window)
+                        .build())
+                .build();
     }
 
     @Override
@@ -67,10 +68,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
         String path = req.getServletPath();
         for (int i = 0; i < rules.length; i++) {
-            final int idx = i;
-            if (path.endsWith(rules[idx].pathSuffix())) {
-                Bucket b = buckets.computeIfAbsent(clientIp(req) + "|" + idx, k -> rules[idx].bucketFactory().get());
-                if (!b.tryConsume(1)) {
+            Rule rule = rules[i];
+            if (path.endsWith(rule.pathSuffix())) {
+                String key = clientIp(req) + "|" + i;
+                if (!store.tryConsume(key, rule.configSupplier())) {
                     res.setStatus(429);
                     res.setContentType(MediaType.APPLICATION_JSON_VALUE);
                     res.setHeader("Retry-After", "60");

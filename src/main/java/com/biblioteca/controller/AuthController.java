@@ -131,9 +131,13 @@ public class AuthController {
     }
 
     @PostMapping("/setup-2fa")
-    public ResponseEntity<Map<String, String>> setup2fa(@AuthenticationPrincipal UserPrincipal principal) {
+    public ResponseEntity<Map<String, String>> setup2fa(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @RequestBody(required = false) Map<String, String> body) {
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
+        // Require the current password before issuing a fresh secret — a
+        // stolen access token alone shouldn't let an attacker take over 2FA.
+        requireCurrentPassword(user, body);
         String secret = authService.setup2fa(user);
         String uri = authService.otpAuthUri(user.getUsername(), secret);
         Map<String, String> resp = new HashMap<>();
@@ -149,9 +153,20 @@ public class AuthController {
                                                           HttpServletRequest req) {
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
+        requireCurrentPassword(user, body);
         authService.verifyAndEnable2fa(user, body.get("code"), body.get("secret"));
         auditService.log(user.getUsername(), "2FA activado", req.getRemoteAddr());
         return ResponseEntity.ok(Map.of("message", "2FA activado correctamente"));
+    }
+
+    private void requireCurrentPassword(User user, Map<String, String> body) {
+        String current = body == null ? null : body.get("currentPassword");
+        if (current == null || current.isBlank()) {
+            throw ApiException.badRequest("Ingresa tu contraseña actual");
+        }
+        if (!passwordEncoder.matches(current, user.getPasswordHash())) {
+            throw ApiException.unauthorized("Contraseña actual incorrecta");
+        }
     }
 
     @PostMapping("/register")
@@ -169,8 +184,8 @@ public class AuthController {
         if (username.length() > 80) {
             throw ApiException.badRequest("Usuario demasiado largo (máx 80)");
         }
-        if (password.length() < 6) {
-            throw ApiException.badRequest("La contraseña debe tener al menos 6 caracteres");
+        if (password.length() < 8) {
+            throw ApiException.badRequest("La contraseña debe tener al menos 8 caracteres");
         }
         if (!Permissions.VALID_ROLES.contains(role)) {
             throw ApiException.badRequest("Rol inválido: " + role);
@@ -260,8 +275,8 @@ public class AuthController {
         if (newPassword == null || newPassword.isBlank()) {
             throw ApiException.badRequest("La contraseña no puede estar vacía");
         }
-        if (newPassword.length() < 6) {
-            throw ApiException.badRequest("La contraseña debe tener al menos 6 caracteres");
+        if (newPassword.length() < 8) {
+            throw ApiException.badRequest("La contraseña debe tener al menos 8 caracteres");
         }
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         user.setPasswordChangedAt(LocalDateTime.now());

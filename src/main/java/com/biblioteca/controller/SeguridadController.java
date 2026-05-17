@@ -166,8 +166,10 @@ public class SeguridadController {
             throw ApiException.badRequest("La URL del video es requerida");
         }
         String lower = videoUrl.trim().toLowerCase();
-        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
-            throw ApiException.badRequest("La URL debe comenzar con http:// o https://");
+        if (!lower.startsWith("https://")) {
+            // http:// was previously allowed but exposes users to mixed-content
+            // warnings and on-the-wire tampering. Require TLS.
+            throw ApiException.badRequest("La URL debe comenzar con https://");
         }
 
         Content c = new Content();

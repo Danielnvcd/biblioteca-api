@@ -48,5 +48,9 @@ app:
   encryption:
     # No fallback in prod. Generate with: openssl rand -base64 32
     key: ${APP_ENCRYPTION_KEY}
+  admin:
+    # Unset by default in prod. Set ADMIN_INITIAL_PASSWORD on first boot only;
+    # leaving it unset means no automatic admin is created.
+    initial-password: ${ADMIN_INITIAL_PASSWORD:}
   rate-limit:
     enabled: true

@@ -48,8 +48,12 @@ public class DashboardService {
         // Days without accidents
         dto.setDiasSinAccidentes(calcularDiasSinAccidentes());
 
-        // Latest docs
-        List<Content> ultimosDocs = contentRepository.findTop3ByOrderByCreatedAtDesc();
+        // Latest docs — exclude role-restricted categories so users without the
+        // role don't see their titles/authors. Computing role-aware visibility
+        // here would need the SecurityContext; this whitelist is simpler and
+        // matches the only category that's actually gated today.
+        List<Content> ultimosDocs = contentRepository
+                .findTop3ByCategoryNotInOrderByCreatedAtDesc(java.util.Set.of("almacenes"));
         dto.setUltimosDocumentos(ultimosDocs.stream().map(c -> toContentDto(c, null)).collect(Collectors.toList()));
 
         return dto;

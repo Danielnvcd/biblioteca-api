@@ -56,6 +56,11 @@ app:
     # Base64 of a random 256-bit key. Dev fallback so local runs work; prod
     # MUST set APP_ENCRYPTION_KEY (see application-prod.yml).
     key: ${APP_ENCRYPTION_KEY:Zm9yLWRldi1vbmx5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
+  admin:
+    # Used only the first time the app boots against an empty users table.
+    # If unset, no admin is auto-created — set ADMIN_INITIAL_PASSWORD on first
+    # run and remove it afterwards.
+    initial-password: ${ADMIN_INITIAL_PASSWORD:Admin1234!}
   upload:
     dir: ${UPLOAD_DIR:./uploads}
   allowed-extensions: pdf,doc,docx,ppt,pptx,xls,xlsx,xlsm,jpg,png,mp4,mp3,wav,heic
@@ -64,6 +69,14 @@ app:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:false}
+    # "memory" (default) for single-instance; "redis" when running multiple
+    # instances behind a load balancer so buckets are shared.
+    backend: ${RATE_LIMIT_BACKEND:memory}
+
+spring.data.web.pageable:
+  default-page-size: 20
+  max-page-size: 100
+  one-indexed-parameters: false
 
 logging:
   level:

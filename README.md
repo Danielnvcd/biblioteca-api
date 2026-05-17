@@ -3,12 +3,15 @@
 Spring Boot 3.2 / Java 17 backend para la plataforma corporativa Maxipet (migración de la app Flask original). Ofrece autenticación JWT con 2FA TOTP, gestión documental por categoría, KPIs y objetivos, quejas, acciones correctivas, alertas de seguridad, cuestionarios, bitácora y directorio.
 
 ## Stack
-- **Java 17 + Spring Boot 3.2.5**
-- **PostgreSQL 12+**
-- **JWT** (jjwt 0.12) con scope `access` / `2fa-pending`
-- **Bucket4j** (rate-limit en memoria)
+- **Java 17 + Spring Boot 3.5.14**
+- **PostgreSQL 12+** (probado en 18)
+- **Flyway 10** (migraciones versionadas)
+- **JWT** (jjwt 0.12) con scope `access` / `2fa-pending` (15min) + refresh rotativo (7d) en cookie httpOnly
+- **Bucket4j 8.14** (rate-limit; memory por defecto, Redis opt-in)
+- **AES-256-GCM** para secretos sensibles en BD (TOTP)
+- **Micrometer + Prometheus** (`/actuator/prometheus`)
+- **Logback JSON** en prod (LogstashEncoder), texto en dev
 - **ZXing** (QR para setup 2FA)
-- **Spring Actuator** (`/actuator/health`)
 
 ## Profiles
 
@@ -32,13 +35,18 @@ El schema lo gestiona Flyway (ver sección **Migraciones de BD** abajo); Hiberna
 | `JWT_SECRET` | dev fallback | **Obligatorio en prod**. Base64, ≥ 64 chars. |
 | `JWT_EXPIRATION_MS` | `900000` (15min) | Access token TTL |
 | `JWT_REFRESH_EXPIRATION_MS` | `604800000` (7d) | Refresh token TTL |
+| `APP_ENCRYPTION_KEY` | dev fallback | **Obligatorio en prod**. Base64 de 32 bytes. Cifra secretos TOTP en BD. **NO la cambies después del primer deploy** (invalidaría todos los 2FA). |
+| `ADMIN_INITIAL_PASSWORD` | dev: `Admin1234!` / prod: vacío | Solo se usa al crear el admin en una BD vacía. Una vez creado, se ignora. En prod déjalo vacío salvo en el primer arranque. |
 | `UPLOAD_DIR` | `./uploads` | Carpeta de archivos subidos (montar volumen) |
-| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | CSV |
+| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | CSV. En prod: el dominio público real. |
 | `RATE_LIMIT_ENABLED` | `false` (dev) / `true` (prod) | Bucket4j por IP+endpoint |
+| `RATE_LIMIT_BACKEND` | `memory` | `memory` o `redis` (multi-instancia). Si `redis`, requiere `SPRING_DATA_REDIS_URL`. |
+| `SPRING_DATA_REDIS_URL` | — | Solo si `RATE_LIMIT_BACKEND=redis`. Ej.: `redis://host:6379` |
 
-Genera un JWT secret nuevo:
+Generar secretos nuevos:
 ```bash
-openssl rand -base64 64
+openssl rand -base64 64    # JWT_SECRET
+openssl rand -base64 32    # APP_ENCRYPTION_KEY
 ```
 
 ## Correr local (dev)
@@ -51,7 +59,7 @@ openssl rand -base64 64
 $env:JAVA_HOME="C:\Program Files\Java\jdk-17"; .\mvnw.cmd spring-boot:run
 ```
 
-Admin por defecto creado en primer arranque: `admin` / `Admin1234!`. **Cámbiala**.
+En dev, el primer arranque crea `admin` / `Admin1234!` automáticamente (ese password viene de la variable `ADMIN_INITIAL_PASSWORD`, hard-coded en `application.yml` solo para dev). **Cámbialo después del primer login.**
 
 ## Build de producción
 
@@ -86,10 +94,10 @@ El contenedor monta volumen `uploads` (persistente) y corre como usuario no-root
 - `POST /api/auth/refresh` (cookie) → `{token, user}` con nuevo access y rota la cookie. Detecta reuso: si llega un refresh ya rotado, revoca toda la familia del usuario.
 - `POST /api/auth/logout` (cookie) → revoca el refresh actual y borra la cookie.
 - `GET  /api/auth/me` (auth) — actualiza `last_seen` con throttle 5 min
-- `POST /api/auth/setup-2fa` (auth) → `{secret, uri, qr}` (qr = PNG base64)
-- `POST /api/auth/confirm-2fa` (auth) `{code, secret}` — valida y activa
-- `POST /api/auth/register` (super_admin) — crea usuario, valida rol válido y password ≥6
-- `POST /api/auth/change-password/{id}` (auth) — self requiere `currentPassword`; super_admin para otros; bloqueado para usuarios protegidos
+- `POST /api/auth/setup-2fa` (auth) `{currentPassword}` → `{secret, uri, qr}` (qr = PNG base64)
+- `POST /api/auth/confirm-2fa` (auth) `{code, secret, currentPassword}` — valida y activa
+- `POST /api/auth/register` (super_admin) — crea usuario, valida rol válido y password ≥ 8
+- `POST /api/auth/change-password/{id}` (auth) — self requiere `currentPassword`; super_admin para otros; bloqueado para usuarios protegidos. Password ≥ 8.
 - `POST /api/auth/delete-user/{id}` (super_admin) — bloqueado para protegidos y self
 - `GET  /api/auth/users` y `/users/{id}` (auth) — directorio
 
@@ -137,18 +145,21 @@ El id viaja en MDC durante toda la request, aparece en cada línea de log emitid
 - **Access tokens cortos (15 min) + refresh tokens rotativos (7d)** en cookie httpOnly. Hash SHA-256 en BD; el valor crudo nunca se persiste. Reuso de un refresh revocado → revoca toda la familia (defensa contra robo).
 - **JWT invalidation on password change** — claim `iat` se compara con `users.password_changed_at`; tokens viejos se rechazan automáticamente. Además se revocan TODOS los refresh tokens del usuario en cambio de contraseña.
 - **2FA TOTP RFC 6238** con Base32 (compatible Google Authenticator/Authy), ventana ±1 step.
-- **TOTP secret cifrado por usuario** (Base32, 160 bits, SecureRandom).
-- **Rate-limit Bucket4j** en `/login` (8/min/IP), `/verify-2fa` (8/min/IP), `/register` (20/h/IP).
+- **TOTP secret cifrado at-rest con AES-256-GCM** (clave: `APP_ENCRYPTION_KEY`). El valor crudo nunca se persiste; lo que ve la BD es `gcm:<base64-iv>:<base64-ciphertext>`. Setup y confirm de 2FA exigen `currentPassword` para que un JWT robado no permita tomar 2FA.
+- **Rate-limit Bucket4j** en `/login` (8/min/IP), `/verify-2fa` (8/min/IP), `/register` (20/h/IP). IP del cliente leída de `request.getRemoteAddr()` (Spring procesa `X-Forwarded-For` oficialmente via `forward-headers-strategy=framework` — no se acepta el header crudo, que un atacante podría falsificar).
 - **Path-traversal protegido** en `FileStorageService` (whitelist categorías + sanitize + `normalize().startsWith(root)`).
-- **Validación de extensión** según `app.allowed-extensions`.
+- **Validación por extensión + magic bytes** del contenido (PDF, PNG, JPEG, OOXML/OLE, audio, video). Rechaza un `.exe` renombrado a `.pdf`.
 - **MIME whitelist** para servir, `X-Content-Type-Options: nosniff`.
-- **Cross-category delete** bloqueado — el permiso se aplica sobre la categoría real del row.
+- **Acceso a archivos**: solo `perfiles`, `boletin`, `quejas`, `seguridad` son públicos (necesarios para `<img src>`). `documentos`, `manuales`, `cursos`, `lecciones`, `almacenes` exigen JWT. `almacenes` adicionalmente exige rol.
+- **Comentarios**: máx 1000 chars + validan que el content exista y que la categoría sea `boletin`/`lecciones`.
 - **Mass-assignment** evitado con DTOs sin `id` para KPI/Objetivo.
-- **XSS en video URLs** — sólo se aceptan `http://` y `https://`.
-- **Almacenes restringido** — `/api/files/almacenes/*` exige auth + rol.
-- **CSRF disabled** (stateless JWT). **CORS** configurable por `CORS_ORIGINS`.
+- **Video URLs** solo `https://` (mitiga mixed-content y tampering en tránsito).
+- **CSRF disabled** (stateless JWT en headers). El refresh va en cookie con `SameSite=Strict`, lo que mitiga CSRF en `/auth/refresh` sin necesidad de un CSRF token.
+- **CORS** configurable por `CORS_ORIGINS`. `Allow-Credentials: true`, lista explícita de orígenes (no wildcard).
 - **last_seen UPDATE directo** para evitar contención de fila.
 - **Audit log en transacción propia** (`REQUIRES_NEW`); fallos no rompen la operación.
+- **Validador de secretos en arranque (`prod`)**: si `JWT_SECRET`, `APP_ENCRYPTION_KEY` o `ADMIN_INITIAL_PASSWORD` resuelven a los fallbacks de dev, la app rechaza arrancar.
+- **Integridad referencial**: FK con `ON DELETE CASCADE` para `refresh_tokens` y `correction_activity`. `UNIQUE(questionnaire_id, user_name)` en respuestas de cuestionario.
 
 ## Migraciones de BD (Flyway)
 
@@ -167,38 +178,171 @@ FROM flyway_schema_history
 ORDER BY installed_rank;
 ```
 
-### Primer deploy a una BD que ya existe (prod, dev actual)
+**Migraciones actuales:**
 
-Está configurado con `baseline-on-migrate=true` + `baseline-version=0`. En el primer arranque:
+| Archivo | Qué hace |
+|---|---|
+| `V1__init_schema.sql` | 14 tablas iniciales + índices |
+| `V2__seed_default_data.sql` | 30 categorías de contenido (idempotente con `WHERE NOT EXISTS`) |
+| `V3__refresh_tokens.sql` | Tabla `refresh_tokens` para el flujo de access+refresh |
+| `V4__cascades_and_unique.sql` | `ON DELETE CASCADE` en FKs problemáticas + `UNIQUE(questionnaire_id, user_name)` |
+
+### Primer arranque en una BD que ya existe (prod, dev actual)
+
+Configurado con `baseline-on-migrate=true` + `baseline-version=1`:
 
 1. Flyway detecta que el schema no está vacío y que no hay tabla `flyway_schema_history`.
-2. Crea la tabla con un registro de baseline V0.
-3. **No re-ejecuta `V1__init_schema.sql`** (porque V1 > baseline V0).
-4. Ejecuta `V2__seed_default_data.sql` (no hace nada si las categorías ya existen, por `WHERE NOT EXISTS`).
-5. Hibernate hace `validate` contra el schema existente. Si todo coincide, la app arranca.
+2. Crea la tabla con un registro de baseline marcado como V1.
+3. **No re-ejecuta `V1`** (el schema actual ya está en V1).
+4. Ejecuta V2, V3, V4 sobre el schema existente. V2 es idempotente; V3/V4 añaden tablas/constraints que aún no existen.
+5. Hibernate hace `validate`. Si todo coincide, la app arranca.
 
-**Antes del primer deploy a prod**, verifica que `V1__init_schema.sql` coincida con el schema actual de prod:
+**Antes del primer deploy a prod**, opcionalmente verifica V1 contra el schema real:
 
 ```bash
-# Desde una máquina con acceso a la BD prod
 pg_dump --schema-only --no-owner --no-privileges -h <host> -U <user> biblioteca_maxipet > prod_schema.sql
-# Comparar visualmente contra src/main/resources/db/migration/V1__init_schema.sql
+diff prod_schema.sql src/main/resources/db/migration/V1__init_schema.sql
 ```
 
-Si encuentras diferencias significativas (columnas distintas, tipos distintos), corrige V1 **antes** de hacer commit y deploy. Si las diferencias son cosméticas (orden de columnas, nombres de constraints autogenerados), no importa: `validate` no las inspecciona.
+Si hay diferencias significativas (columnas distintas, tipos distintos), corrige V1 **antes** de commitear. Si son cosméticas (orden, nombres de constraint), no importa: `validate` no las inspecciona.
 
 ### Primer arranque en BD vacía (CI, dev nuevo)
 
 1. Flyway crea `flyway_schema_history` vacía.
-2. Ejecuta `V1__init_schema.sql` → crea las 14 tablas + índices.
-3. Ejecuta `V2__seed_default_data.sql` → siembra las 30 categorías.
-4. Hibernate `validate` pasa.
-5. `DataInitializer` crea el admin.
+2. Ejecuta V1 → V2 → V3 → V4.
+3. Hibernate `validate` pasa.
+4. `DataInitializer` crea el admin si `ADMIN_INITIAL_PASSWORD` está seteado.
 
-## Pendientes recomendados para escala
+---
 
-- Paginación real (hoy listas con cap de 500).
-- **Distributed rate-limit** (Redis) si se escala a múltiples instancias.
+# Deploy a producción
+
+Esta sección documenta lo necesario para subir el backend detrás de **Nginx + Cloudflare Tunnel**. La app no requiere puerto público.
+
+## Pre-requisitos
+
+| Item | Cómo |
+|---|---|
+| Java 17 | Cualquier distro (OpenJDK, Temurin). En el host del backend. |
+| PostgreSQL 13+ | Con la BD `biblioteca_maxipet` creada y un usuario con permisos. |
+| `cloudflared` | Cliente del Cloudflare Tunnel registrado contra tu zona DNS. |
+| Nginx | Reverse proxy entre `cloudflared` y la JVM. |
+| (Opcional) Redis | Solo si configuras `RATE_LIMIT_BACKEND=redis` para múltiples instancias. |
+
+## Secretos a generar
+
+```bash
+openssl rand -base64 64    # JWT_SECRET
+openssl rand -base64 32    # APP_ENCRYPTION_KEY  ← guardarla a buen recaudo
+```
+
+Si **pierdes** `APP_ENCRYPTION_KEY` después del primer deploy, los 2FA cifrados quedan inservibles y los usuarios afectados deben re-configurar 2FA. **No la rotes sin un plan de migración**.
+
+## Variables de entorno mínimas en prod
+
+```bash
+SPRING_PROFILES_ACTIVE=prod
+JWT_SECRET=<openssl rand -base64 64>
+APP_ENCRYPTION_KEY=<openssl rand -base64 32>
+DATABASE_URL=jdbc:postgresql://localhost:5432/biblioteca_maxipet
+DB_USERNAME=biblioteca_user
+DB_PASSWORD=<password>
+CORS_ORIGINS=https://app.tudominio.com
+UPLOAD_DIR=/var/biblioteca-api/uploads
+# Solo en el PRIMER arranque para crear el admin:
+ADMIN_INITIAL_PASSWORD=<password-fuerte-temporal>
+```
+
+Después del primer login del admin, **borra `ADMIN_INITIAL_PASSWORD` del entorno** y reinicia. La app ya no la necesita.
+
+## Configuración de Nginx
+
+Crítica para que el backend reciba la IP real del cliente y sepa que la request es HTTPS (las cookies `Secure` dependen de eso):
+
+```nginx
+upstream biblioteca_api {
+    server 127.0.0.1:8080;
+}
+
+# Acepta CF-Connecting-IP solo de los rangos de Cloudflare.
+# Lista oficial: https://www.cloudflare.com/ips-v4
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+# ... (añadir todos los rangos)
+real_ip_header CF-Connecting-IP;
+
+server {
+    listen 80;
+    server_name app.tudominio.com;
+
+    client_max_body_size 50M;   # uploads grandes
+
+    location / {
+        proxy_pass         http://biblioteca_api;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto https;  # crítico: la cookie Secure depende de esto
+        proxy_set_header   X-Forwarded-Host  $host;
+    }
+}
+```
+
+Spring procesa los `X-Forwarded-*` automáticamente vía `forward-headers-strategy: framework`, así que tu `RateLimitFilter` y la cookie `Secure` funcionan correctamente.
+
+## Cloudflare Tunnel
+
+`cloudflared` apunta su ingress a Nginx local (`http://localhost:80`). No abras el puerto 80 al internet — el tunnel se encarga del transporte cifrado.
+
+```yaml
+# /etc/cloudflared/config.yml
+tunnel: <tunnel-id>
+credentials-file: /etc/cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: app.tudominio.com
+    service: http://localhost:80
+  - service: http_status:404
+```
+
+## Endurecimiento adicional (recomendado en Cloudflare)
+
+- **Bloquear `/actuator/prometheus`** en Cloudflare WAF — exponerlo internamente para tu scraper, no por Cloudflare.
+- **Rate-limit a nivel del edge** en `/api/auth/login` y `/api/auth/refresh` (10 req/min por IP). Tu rate-limit Bucket4j sigue siendo defensa adicional.
+- **WAF managed rules** activadas (OWASP CRS).
+- **Bot Fight Mode** o **Bot Management**.
+
+## Smoke test post-deploy
+
+```bash
+# Health
+curl https://app.tudominio.com/actuator/health
+# → {"status":"UP"}
+
+# Login real
+curl -i -X POST https://app.tudominio.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"...","remember":true}'
+# → 200 + Set-Cookie: refreshToken=...; HttpOnly; Secure; SameSite=Strict; Path=/api/auth
+```
+
+Si la cookie viene **sin** `Secure`, hay un problema con `X-Forwarded-Proto` en Nginx: revísalo. Si la app rechaza arrancar con un mensaje sobre "dev fallback", es que olvidaste setear alguna env var de secret.
+
+## Logs en prod
+
+Salen en JSON (LogstashEncoder) a stdout. Recoléctalos con tu logger preferido (Loki/ELK/CloudWatch). Cada línea trae `requestId` para correlacionar.
+
+```bash
+# Si corres con systemd:
+journalctl -u biblioteca-api -f --output=cat | jq .
+```
+
+## Mejoras opcionales para escalar (cuando aplique)
+
+| Escenario | Cambio |
+|---|---|
+| Necesitas correr 2+ instancias del backend | `RATE_LIMIT_BACKEND=redis` + `SPRING_DATA_REDIS_URL=...`. Sin esto los buckets son por proceso. |
+| Audit log crece sin freno | Job cron que mueva filas viejas a una tabla histórica o las archive. |
+| Picos de tráfico en `/login` | Subir el rate-limit en Cloudflare antes que en la app. |
 
 ## Build/test
 

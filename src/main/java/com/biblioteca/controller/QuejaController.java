@@ -1,5 +1,6 @@
 package com.biblioteca.controller;
 
+import com.biblioteca.dto.PagedResponse;
 import com.biblioteca.dto.QuejaDto;
 import com.biblioteca.exception.ApiException;
 import com.biblioteca.model.Queja;
@@ -7,6 +8,10 @@ import com.biblioteca.repository.QuejaRepository;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.UserPrincipal;
 import com.biblioteca.service.FileStorageService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -31,10 +36,15 @@ public class QuejaController {
     }
 
     @GetMapping
-    public ResponseEntity<List<QuejaDto>> list() {
-        List<QuejaDto> dtos = quejaRepository.findAllByOrderByFechaDesc().stream()
-                .map(this::toDto).collect(Collectors.toList());
-        return ResponseEntity.ok(dtos);
+    public ResponseEntity<PagedResponse<QuejaDto>> list(
+            @RequestParam(required = false) String estado,
+            @RequestParam(required = false) String q,
+            @PageableDefault(size = 20, sort = "fecha", direction = Sort.Direction.DESC)
+            Pageable pageable) {
+        String estadoFilter = (estado != null) ? estado.trim() : "";
+        String search       = (q != null) ? q.trim() : "";
+        Page<Queja> page = quejaRepository.search(estadoFilter, search, pageable);
+        return ResponseEntity.ok(PagedResponse.from(page, this::toDto));
     }
 
     @PostMapping("/create")

@@ -2,6 +2,7 @@ package com.biblioteca.controller;
 
 import com.biblioteca.dto.CommentDto;
 import com.biblioteca.dto.ContentDto;
+import com.biblioteca.dto.PagedResponse;
 import com.biblioteca.exception.ApiException;
 import com.biblioteca.model.Category;
 import com.biblioteca.model.Comment;
@@ -12,6 +13,10 @@ import com.biblioteca.repository.ContentRepository;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.UserPrincipal;
 import com.biblioteca.service.FileStorageService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -42,42 +47,46 @@ public class ContentController {
     public ResponseEntity<Map<String, Object>> getByCategory(
             @PathVariable String category,
             @RequestParam(required = false) String categoria,
+            @RequestParam(required = false) String q,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC)
+            Pageable pageable,
             @AuthenticationPrincipal UserPrincipal principal) {
 
         if ("almacenes".equalsIgnoreCase(category)) {
             Permissions.requireAlmacenView(principal);
         }
 
-        List<Content> items;
-        if (categoria != null && !categoria.isEmpty()) {
-            items = contentRepository.findByCategoryAndManualCategoryOrderByCreatedAtDesc(category, categoria);
-        } else {
-            items = contentRepository.findByCategoryOrderByCreatedAtDesc(category);
-        }
+        // Empty string ("") means "no filter" downstream — see repository javadoc.
+        String manualCat = (categoria != null) ? categoria.trim() : "";
+        String search    = (q != null) ? q.trim() : "";
+        Page<Content> page = contentRepository.search(category, manualCat, search, pageable);
+
         List<Category> cats = categoryRepository.findByTypeOrderBySortOrder(category);
         List<String> categorias = cats.stream().map(Category::getName).collect(Collectors.toList());
 
-        // For commentable categories (boletin, lecciones), batch-load comments.
+        // For commentable categories (boletin, lecciones), batch-load comments
+        // only for the IDs in the current page.
         boolean commentable = "boletin".equalsIgnoreCase(category) || "lecciones".equalsIgnoreCase(category);
-        Map<String, List<Comment>> commentsByContent = Map.of();
-        if (commentable && !items.isEmpty()) {
-            List<String> ids = items.stream().map(Content::getId).collect(Collectors.toList());
-            commentsByContent = commentRepository.findByContentIdInOrderByCreatedAtAsc(ids).stream()
+        Map<String, List<Comment>> commentsMap;
+        if (commentable && !page.getContent().isEmpty()) {
+            List<String> ids = page.getContent().stream().map(Content::getId).collect(Collectors.toList());
+            commentsMap = commentRepository.findByContentIdInOrderByCreatedAtAsc(ids).stream()
                     .collect(Collectors.groupingBy(Comment::getContentId));
+        } else {
+            commentsMap = Map.of();
         }
-        final Map<String, List<Comment>> commentsMap = commentsByContent;
 
-        List<ContentDto> dtos = items.stream().map(c -> {
+        PagedResponse<ContentDto> items = PagedResponse.from(page, c -> {
             ContentDto dto = toDto(c, null);
             if (commentable) {
                 List<Comment> cs = commentsMap.getOrDefault(c.getId(), List.of());
                 dto.setComments(cs.stream().map(this::toCommentDto).collect(Collectors.toList()));
             }
             return dto;
-        }).collect(Collectors.toList());
+        });
 
         Map<String, Object> response = new HashMap<>();
-        response.put("items", dtos);
+        response.put("items", items);
         response.put("categorias", categorias);
         return ResponseEntity.ok(response);
     }
@@ -129,12 +138,25 @@ public class ContentController {
         return ResponseEntity.ok(Map.of("message", "Eliminado correctamente"));
     }
 
+    private static final int COMMENT_MAX_LENGTH = 1000;
+    private static final java.util.Set<String> COMMENTABLE_CATEGORIES =
+            java.util.Set.of("boletin", "lecciones");
+
     @PostMapping("/{contentId}/comment")
     public ResponseEntity<Map<String, String>> addComment(@PathVariable String contentId,
                                                           @RequestParam String text,
                                                           @AuthenticationPrincipal UserPrincipal principal) {
         if (text == null || text.isBlank()) {
             throw ApiException.badRequest("El comentario no puede estar vacío");
+        }
+        if (text.length() > COMMENT_MAX_LENGTH) {
+            throw ApiException.badRequest(
+                    "El comentario es demasiado largo (máx " + COMMENT_MAX_LENGTH + " caracteres)");
+        }
+        Content content = contentRepository.findById(contentId)
+                .orElseThrow(() -> ApiException.notFound("Contenido no encontrado"));
+        if (!COMMENTABLE_CATEGORIES.contains(content.getCategory().toLowerCase())) {
+            throw ApiException.badRequest("Esta categoría no admite comentarios");
         }
         Comment comment = new Comment();
         comment.setContentId(contentId);

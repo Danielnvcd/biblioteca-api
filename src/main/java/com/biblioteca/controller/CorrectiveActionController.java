@@ -2,6 +2,7 @@ package com.biblioteca.controller;
 
 import com.biblioteca.dto.CorrectionActivityDto;
 import com.biblioteca.dto.CorrectiveActionDto;
+import com.biblioteca.dto.PagedResponse;
 import com.biblioteca.exception.ApiException;
 import com.biblioteca.model.CorrectionActivity;
 import com.biblioteca.model.CorrectiveAction;
@@ -9,6 +10,10 @@ import com.biblioteca.repository.CorrectionActivityRepository;
 import com.biblioteca.repository.CorrectiveActionRepository;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.UserPrincipal;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -32,10 +37,11 @@ public class CorrectiveActionController {
     }
 
     @GetMapping
-    public ResponseEntity<List<CorrectiveActionDto>> list() {
-        List<CorrectiveAction> actions = actionRepository.findAllWithActivities();
-        List<CorrectiveActionDto> dtos = actions.stream().map(this::toDto).collect(Collectors.toList());
-        return ResponseEntity.ok(dtos);
+    public ResponseEntity<PagedResponse<CorrectiveActionDto>> list(
+            @PageableDefault(size = 20, sort = "fechaReporte", direction = Sort.Direction.DESC)
+            Pageable pageable) {
+        Page<CorrectiveAction> page = actionRepository.findAllBy(pageable);
+        return ResponseEntity.ok(PagedResponse.from(page, this::toDto));
     }
 
     @PostMapping("/create")
