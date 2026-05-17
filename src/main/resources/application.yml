@@ -97,6 +97,15 @@ management:
   endpoint:
     health:
       show-details: never
+  health:
+    # spring-boot-starter-data-redis está en el classpath para soportar el
+    # backend de rate-limit por Redis. Su health indicator se auto-activa e
+    # intenta conectar a localhost:6379 aunque no estés usando Redis, dejando
+    # el /actuator/health en DOWN y el container "unhealthy" para siempre.
+    # Lo deshabilitamos por default; cuando uses RATE_LIMIT_BACKEND=redis,
+    # poné MANAGEMENT_HEALTH_REDIS_ENABLED=true en el .env.
+    redis:
+      enabled: ${MANAGEMENT_HEALTH_REDIS_ENABLED:false}
   metrics:
     tags:
       application: biblioteca-api
