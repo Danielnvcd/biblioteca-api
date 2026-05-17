@@ -7,7 +7,6 @@ import com.biblioteca.repository.UserRepository;
 import com.biblioteca.security.RefreshTokenService;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.RefreshCookieFactory;
-import com.biblioteca.security.SessionInvalidationService;
 import com.biblioteca.security.UserPrincipal;
 import com.biblioteca.service.AuditService;
 import com.biblioteca.service.AuthService;
@@ -44,14 +43,12 @@ public class AuthController {
     private final FileStorageService fileStorageService;
     private final PasswordEncoder passwordEncoder;
     private final QrCodeService qrCodeService;
-    private final SessionInvalidationService sessions;
     private final RefreshCookieFactory refreshCookieFactory;
     private final RefreshTokenService refreshTokenService;
 
     public AuthController(AuthService authService, UserRepository userRepository,
                           AuditService auditService, FileStorageService fileStorageService,
                           PasswordEncoder passwordEncoder, QrCodeService qrCodeService,
-                          SessionInvalidationService sessions,
                           RefreshCookieFactory refreshCookieFactory,
                           RefreshTokenService refreshTokenService) {
         this.authService = authService;
@@ -60,7 +57,6 @@ public class AuthController {
         this.fileStorageService = fileStorageService;
         this.passwordEncoder = passwordEncoder;
         this.qrCodeService = qrCodeService;
-        this.sessions = sessions;
         this.refreshCookieFactory = refreshCookieFactory;
         this.refreshTokenService = refreshTokenService;
     }
@@ -200,17 +196,21 @@ public class AuthController {
     public ResponseEntity<List<UserDto>> listUsers(@AuthenticationPrincipal UserPrincipal principal) {
         // List is needed for both admin panel (super_admin) and user directory (any logged-in).
         // The frontend Usuarios page only shows management actions for super_admin.
+        boolean includeSensitive = Permissions.isSuperAdmin(principal);
         List<User> users = userRepository.findAll();
-        List<UserDto> dtos = users.stream().map(authService::toDto).collect(Collectors.toList());
+        List<UserDto> dtos = users.stream()
+                .map(u -> includeSensitive ? authService.toDto(u) : authService.toDirectoryDto(u))
+                .collect(Collectors.toList());
         return ResponseEntity.ok(dtos);
     }
 
     @GetMapping("/users/{id}")
-    public ResponseEntity<UserDto> getUser(@PathVariable Integer id) {
-        // Public profile (any authenticated user). UserDto excludes password_hash.
+    public ResponseEntity<UserDto> getUser(@PathVariable Integer id,
+                                           @AuthenticationPrincipal UserPrincipal principal) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
-        return ResponseEntity.ok(authService.toDto(user));
+        boolean includeSensitive = Permissions.isSuperAdmin(principal) || principal.getId().equals(id);
+        return ResponseEntity.ok(includeSensitive ? authService.toDto(user) : authService.toDirectoryDto(user));
     }
 
     @PostMapping("/profile")
@@ -261,8 +261,9 @@ public class AuthController {
         user.setPasswordHash(passwordEncoder.encode(body.getNewPassword()));
         user.setPasswordChangedAt(LocalDateTime.now());
         userRepository.save(user);
-        sessions.invalidate(user.getId());   // bust the cache so the new pca takes effect immediately
-        // Also kill every refresh token — a stolen one shouldn't outlive the password change.
+        // JwtAuthenticationFilter re-lee password_changed_at de la BD en cada request,
+        // así que el nuevo timestamp surte efecto inmediato sin necesidad de invalidar caches.
+        // Mata todos los refresh tokens — uno robado no debe sobrevivir el cambio.
         refreshTokenService.revokeAllForUser(user.getId());
         auditService.log(principal.getUsername(),
                 "Cambió contraseña de " + user.getUsername(), req.getRemoteAddr());

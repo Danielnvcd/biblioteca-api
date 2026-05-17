@@ -70,7 +70,7 @@ public class CorrectiveActionController {
     }
 
     @PostMapping("/edit/{id}")
-    public ResponseEntity<Map<String, String>> edit(@PathVariable Integer id, @RequestBody CorrectiveActionDto dto,
+    public ResponseEntity<Map<String, String>> edit(@PathVariable Integer id, @Valid @RequestBody CorrectiveActionDto dto,
                                                     @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 

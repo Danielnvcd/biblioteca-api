@@ -153,4 +153,20 @@ public class AuthService {
         dto.setLastSeen(user.getLastSeen());
         return dto;
     }
+
+    /**
+     * Public directory view for regular authenticated users. Keeps profile data
+     * useful for collaboration but omits privilege and session metadata.
+     */
+    public UserDto toDirectoryDto(User user) {
+        UserDto dto = new UserDto();
+        dto.setId(user.getId());
+        dto.setUsername(user.getUsername());
+        dto.setFullName(user.getFullName());
+        dto.setArea(user.getArea());
+        dto.setPosition(user.getPosition());
+        dto.setFactory(user.getFactory());
+        dto.setProfilePic(user.getProfilePic());
+        return dto;
+    }
 }

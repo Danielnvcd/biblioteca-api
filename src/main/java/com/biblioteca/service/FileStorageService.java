@@ -5,6 +5,12 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
+import java.awt.Image;
+import java.awt.image.BufferedImage;
+import java.io.File;
+
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -101,6 +107,45 @@ public class FileStorageService {
             Path path = resolvePath(category, filename);
             Files.deleteIfExists(path);
         } catch (Exception ignored) {
+        }
+    }
+
+    
+    public Path getThumbnailPath(String category, String filename) {
+        Path originalPath = resolvePath(category, filename);
+        if (!Files.exists(originalPath)) {
+            return originalPath; // Let it 404 naturally
+        }
+        
+        String ext = extensionOf(filename).toLowerCase(Locale.ROOT);
+        if (!Arrays.asList("jpg", "jpeg", "png", "gif", "bmp").contains(ext)) {
+            return originalPath; // Thumbnails not natively supported for WebP/HEIC by ImageIO without plugins
+        }
+
+        Path thumbPath = originalPath.getParent().resolve(originalPath.getFileName().toString() + ".thumb.jpg");
+        if (Files.exists(thumbPath)) {
+            return thumbPath;
+        }
+
+        // Generate thumbnail
+        try {
+            File originalFile = originalPath.toFile();
+            BufferedImage originalImage = ImageIO.read(originalFile);
+            if (originalImage == null) return originalPath;
+
+            int targetWidth = 400;
+            int targetHeight = (int) (originalImage.getHeight() * ((double) targetWidth / originalImage.getWidth()));
+            if (targetHeight <= 0) targetHeight = 1;
+
+            BufferedImage thumbImage = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g2d = thumbImage.createGraphics();
+            g2d.drawImage(originalImage.getScaledInstance(targetWidth, targetHeight, Image.SCALE_SMOOTH), 0, 0, null);
+            g2d.dispose();
+
+            ImageIO.write(thumbImage, "jpg", thumbPath.toFile());
+            return thumbPath;
+        } catch (Exception e) {
+            return originalPath; // Fallback to original if thumbnail generation fails
         }
     }
 

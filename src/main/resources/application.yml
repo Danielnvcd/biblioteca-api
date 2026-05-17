@@ -1,8 +1,8 @@
 server:
   port: 8080
   error:
-    include-message: always
-    include-binding-errors: always
+    include-message: never
+    include-binding-errors: never
 
 spring:
   datasource:
@@ -49,18 +49,18 @@ spring:
 
 app:
   jwt:
-    secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970337336763979244226452948404D635166546A576E5A7234753778214125442A47}
+    secret: ${JWT_SECRET}
     expiration-ms: 900000              # 15 min — short-lived access token
     refresh-expiration-ms: 604800000   # 7 days — refresh rotated on every use
   encryption:
     # Base64 of a random 256-bit key. Dev fallback so local runs work; prod
     # MUST set APP_ENCRYPTION_KEY (see application-prod.yml).
-    key: ${APP_ENCRYPTION_KEY:Zm9yLWRldi1vbmx5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
+    key: ${APP_ENCRYPTION_KEY}
   admin:
     # Used only the first time the app boots against an empty users table.
     # If unset, no admin is auto-created — set ADMIN_INITIAL_PASSWORD on first
     # run and remove it afterwards.
-    initial-password: ${ADMIN_INITIAL_PASSWORD:Admin1234!}
+    initial-password: ${ADMIN_INITIAL_PASSWORD:}
   upload:
     dir: ${UPLOAD_DIR:./uploads}
   allowed-extensions: pdf,doc,docx,ppt,pptx,xls,xlsx,xlsm,jpg,png,mp4,mp3,wav,heic
@@ -96,7 +96,7 @@ management:
         include: health,info
   endpoint:
     health:
-      show-details: when-authorized
+      show-details: never
   metrics:
     tags:
       application: biblioteca-api

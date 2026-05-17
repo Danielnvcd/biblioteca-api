@@ -6,4 +6,5 @@ Get-Content ".env" | ForEach-Object {
 }
 
 $env:JAVA_HOME="C:\Program Files\Java\jdk-17"
+$env:SPRING_PROFILES_ACTIVE="dev"
 .\mvnw.cmd clean spring-boot:run

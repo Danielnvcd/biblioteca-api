@@ -13,6 +13,13 @@ RUN mvn -B -q -DskipTests package
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 
+# curl es para el HEALTHCHECK. Lo instalamos explícitamente para no depender
+# de qué herramientas trae la imagen base (eclipse-temurin a veces incluye
+# wget, a veces no, según la versión).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
+
 # Run as non-root
 RUN groupadd --system app && useradd --system --gid app --home /app app
 
@@ -31,6 +38,6 @@ ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+UseG1GC -Djava.security.egd=file:/de
     UPLOAD_DIR=/app/uploads
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD wget -q -O- http://127.0.0.1:8080/actuator/health || exit 1
+  CMD curl -fsS http://127.0.0.1:8080/actuator/health || exit 1
 
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

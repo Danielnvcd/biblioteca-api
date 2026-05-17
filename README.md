@@ -89,7 +89,7 @@ El contenedor monta volumen `uploads` (persistente) y corre como usuario no-root
 ## Endpoints clave
 
 ### Auth
-- `POST /api/auth/login` `{username, password}` → `{token, user}` o `{requires2fa, stepToken, message}`. Si OK, además setea cookie `refreshToken` (httpOnly, SameSite=Strict, Path=/api/auth, Secure en prod).
+- `POST /api/auth/login` `{username, password}` → `{token, user}` o `{requires2fa, stepToken, message}`. Si OK, además setea cookie `refreshToken` (httpOnly, Path=/api/auth, Secure en prod; SameSite=None en prod / Lax en dev — ver nota en sección Seguridad).
 - `POST /api/auth/verify-2fa` `{stepToken, code}` → `{token, user}` (stepToken expira a 5 min). Setea la misma cookie de refresh.
 - `POST /api/auth/refresh` (cookie) → `{token, user}` con nuevo access y rota la cookie. Detecta reuso: si llega un refresh ya rotado, revoca toda la familia del usuario.
 - `POST /api/auth/logout` (cookie) → revoca el refresh actual y borra la cookie.
@@ -202,7 +202,7 @@ Una pasada de revisión pre-producción cubrió los siguientes puntos. Para deta
 - **Comentarios**: máx 1000 chars + validan que el content exista y que la categoría sea `boletin`/`lecciones`.
 - **Mass-assignment** evitado con DTOs sin `id` para KPI/Objetivo.
 - **Video URLs** solo `https://` (mitiga mixed-content y tampering en tránsito).
-- **CSRF disabled** (stateless JWT en headers). El refresh va en cookie con `SameSite=Strict`, lo que mitiga CSRF en `/auth/refresh` sin necesidad de un CSRF token.
+- **CSRF disabled** (stateless JWT en headers). El refresh va en cookie httpOnly con `SameSite=None; Secure` en prod (necesario porque el frontend en Vercel y la API en el servidor propio viven en dominios distintos — sin `None` el navegador no manda la cookie en el refresh cross-site) y `SameSite=Lax` en dev. La defensa contra CSRF en `/auth/refresh` se cubre con la combinación CORS allowlist explícita + el cookie path estrecho `/api/auth` + detección de reuso del refresh (un token rotado dispara revocación de toda la familia).
 - **CORS** configurable por `CORS_ORIGINS`. `Allow-Credentials: true`, lista explícita de orígenes (no wildcard).
 - **last_seen UPDATE directo** para evitar contención de fila.
 - **Audit log en transacción propia** (`REQUIRES_NEW`); fallos no rompen la operación.
@@ -296,7 +296,7 @@ APP_ENCRYPTION_KEY=<openssl rand -base64 32>
 DATABASE_URL=jdbc:postgresql://localhost:5432/biblioteca_maxipet
 DB_USERNAME=biblioteca_user
 DB_PASSWORD=<password>
-CORS_ORIGINS=https://app.tudominio.com
+CORS_ORIGINS=https://tu-app.vercel.app    # o el custom domain del frontend, exacto, sin barra final, sin *
 UPLOAD_DIR=/var/biblioteca-api/uploads
 # Solo en el PRIMER arranque para crear el admin:
 ADMIN_INITIAL_PASSWORD=<password-fuerte-temporal>
@@ -371,10 +371,10 @@ curl https://app.tudominio.com/actuator/health
 curl -i -X POST https://app.tudominio.com/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"...","remember":true}'
-# → 200 + Set-Cookie: refreshToken=...; HttpOnly; Secure; SameSite=Strict; Path=/api/auth
+# → 200 + Set-Cookie: refreshToken=...; HttpOnly; Secure; SameSite=None; Path=/api/auth
 ```
 
-Si la cookie viene **sin** `Secure`, hay un problema con `X-Forwarded-Proto` en Nginx: revísalo. Si la app rechaza arrancar con un mensaje sobre "dev fallback", es que olvidaste setear alguna env var de secret.
+Si la cookie viene **sin** `Secure`, hay un problema con `X-Forwarded-Proto` en Nginx: revísalo. Si viene con `SameSite=Lax` o `Strict`, el perfil activo no es `prod` (chequea `SPRING_PROFILES_ACTIVE`). Si la app rechaza arrancar con un mensaje sobre "dev fallback", es que olvidaste setear alguna env var de secret.
 
 ## Logs en prod
 

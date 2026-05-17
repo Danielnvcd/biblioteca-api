@@ -11,15 +11,14 @@ import java.util.Arrays;
 /**
  * Builds the Set-Cookie value for the refresh token.
  *
- * SameSite=Strict — the browser will never send this cookie on cross-site
- * navigations, mitigating CSRF on the /api/auth/refresh endpoint.
+ * SameSite — en prod el frontend (Vercel) y la API (servidor propio) viven en
+ * dominios distintos, así que la cookie tiene que ser SameSite=None para que
+ * el navegador la mande en el POST /api/auth/refresh cross-site. None exige
+ * Secure=true, que ya se activa bajo perfil prod. En dev queda SameSite=Lax
+ * (Chrome rechaza None sin Secure sobre http://localhost).
  *
- * Secure — required by browsers for SameSite=None, and best-practice for
- * httpOnly auth cookies; only enabled under the "prod" profile because dev
- * runs over http://localhost.
- *
- * Path=/api/auth — limits scope so the cookie isn't sent on every business
- * request (smaller exposure window, less data on the wire).
+ * Path=/api/auth — limita el scope para que la cookie no viaje en cada
+ * request de negocio (menor superficie, menos bytes en cable).
  */
 @Component
 public class RefreshCookieFactory {
@@ -28,11 +27,14 @@ public class RefreshCookieFactory {
     private static final String PATH = "/api/auth";
 
     private final boolean secure;
+    private final String sameSite;
     private final long refreshExpirationMs;
 
     public RefreshCookieFactory(Environment env,
                                 @Value("${app.jwt.refresh-expiration-ms}") long refreshExpirationMs) {
-        this.secure = Arrays.asList(env.getActiveProfiles()).contains("prod");
+        boolean prod = Arrays.asList(env.getActiveProfiles()).contains("prod");
+        this.secure = prod;
+        this.sameSite = prod ? "None" : "Lax";
         this.refreshExpirationMs = refreshExpirationMs;
     }
 
@@ -40,7 +42,7 @@ public class RefreshCookieFactory {
         return ResponseCookie.from(COOKIE_NAME, rawToken)
                 .httpOnly(true)
                 .secure(secure)
-                .sameSite("Strict")
+                .sameSite(sameSite)
                 .path(PATH)
                 .maxAge(Duration.ofMillis(refreshExpirationMs))
                 .build();
@@ -51,7 +53,7 @@ public class RefreshCookieFactory {
         return ResponseCookie.from(COOKIE_NAME, "")
                 .httpOnly(true)
                 .secure(secure)
-                .sameSite("Strict")
+                .sameSite(sameSite)
                 .path(PATH)
                 .maxAge(0)
                 .build();

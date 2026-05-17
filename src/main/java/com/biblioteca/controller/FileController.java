@@ -62,7 +62,7 @@ public class FileController {
     }
 
     @GetMapping("/{category}/{filename}")
-    public ResponseEntity<Resource> getFile(@PathVariable String category, @PathVariable String filename) {
+    public ResponseEntity<Resource> getFile(@PathVariable String category, @PathVariable String filename, @RequestParam(value = "thumb", required = false, defaultValue = "false") boolean thumb) {
         String cat = category.toLowerCase();
         if (!PUBLIC_CATEGORIES.contains(cat)) {
             UserPrincipal principal = currentPrincipal();
@@ -77,10 +77,12 @@ public class FileController {
         }
 
         try {
-            Path filePath = fileStorageService.getPath(category, filename);
+            Path filePath = thumb ? fileStorageService.getThumbnailPath(category, filename) : fileStorageService.getPath(category, filename);
             Resource resource = new UrlResource(filePath.toUri());
             if (resource.exists() && resource.isReadable()) {
-                String contentType = determineContentType(filename);
+                // El thumb generado siempre es JPG aunque el original sea .png/.gif,
+                // así que el content-type debe salir del archivo realmente servido.
+                String contentType = determineContentType(filePath.getFileName().toString());
                 return ResponseEntity.ok()
                         .contentType(MediaType.parseMediaType(contentType))
                         .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")

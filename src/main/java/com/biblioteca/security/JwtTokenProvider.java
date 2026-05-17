@@ -67,10 +67,10 @@ public class JwtTokenProvider {
         return s == null ? "access" : s.toString();
     }
 
-    /** Issued-at as epoch seconds. */
-    public long getIssuedAtEpoch(String token) {
+    /** Issued-at as epoch milliseconds. */
+    public long getIssuedAtEpochMillis(String token) {
         Date iat = parseToken(token).getIssuedAt();
-        return iat == null ? 0L : iat.getTime() / 1000L;
+        return iat == null ? 0L : iat.getTime();
     }
 
     public Integer getUserIdFromToken(String token) {

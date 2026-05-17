@@ -1,0 +1,20 @@
+server:
+  error:
+    include-message: always
+    include-binding-errors: always
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970337336763979244226452948404D635166546A576E5A7234753778214125442A47}
+  encryption:
+    # Dev fallback so local runs work without env wiring. Never use outside the
+    # explicit dev profile.
+    key: ${APP_ENCRYPTION_KEY:Zm9yLWRldi1vbmx5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
+  admin:
+    # First-boot convenience for local development only.
+    initial-password: ${ADMIN_INITIAL_PASSWORD:Admin1234!}
+
+management:
+  endpoint:
+    health:
+      show-details: when-authorized

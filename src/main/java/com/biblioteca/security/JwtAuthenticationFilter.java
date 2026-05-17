@@ -13,6 +13,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.Optional;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -35,15 +36,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String scope = tokenProvider.getScopeFromToken(token);
                 if ("access".equals(scope)) {
                     Integer userId = tokenProvider.getUserIdFromToken(token);
-                    // Reject tokens issued before the user's last password change.
-                    long issuedAt = tokenProvider.getIssuedAtEpoch(token);
-                    long pwdChanged = sessions.passwordChangedEpoch(userId);
+                    Optional<UserSecurityState> stateOpt = sessions.findSecurityState(userId);
+                    if (stateOpt.isEmpty()) {
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
+
+                    UserSecurityState state = stateOpt.get();
+                    long issuedAt = tokenProvider.getIssuedAtEpochMillis(token);
+                    long pwdChanged = sessions.passwordChangedEpochMillis(state);
                     if (pwdChanged > 0 && issuedAt < pwdChanged) {
                         filterChain.doFilter(request, response);
                         return;
                     }
-                    String username = tokenProvider.getUsernameFromToken(token);
-                    String role = tokenProvider.getRoleFromToken(token);
+
+                    String username = state.username();
+                    String role = state.role();
                     if (role == null) role = "user";
 
                     UserPrincipal principal = new UserPrincipal(userId, username, role);

@@ -16,6 +16,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Tope de memoria para que la BD no asfixie al resto del host si una query
+    # se descontrola. Ajustar si la BD crece mucho (subir y revisar shared_buffers).
+    mem_limit: 512m
 
   api:
     build: .
@@ -35,7 +38,13 @@ services:
     volumes:
       - uploads:/app/uploads
     ports:
-      - "8080:8080"
+      # Bind a 127.0.0.1 — el backend solo lo ve Nginx en el mismo host. Sin
+      # esto el puerto 8080 quedaría expuesto a 0.0.0.0 y cualquiera con la IP
+      # pública del server podría bypasear Nginx + Cloudflare Tunnel + WAF.
+      - "127.0.0.1:8080:8080"
+    # La JVM ya respeta este tope vía MaxRAMPercentage=75 del Dockerfile,
+    # así que el heap se queda ~768MB y deja aire para metaspace / threads.
+    mem_limit: 1g
 
 volumes:
   db-data:

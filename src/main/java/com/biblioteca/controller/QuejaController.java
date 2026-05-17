@@ -68,7 +68,7 @@ public class QuejaController {
     }
 
     @PostMapping("/edit/{id}")
-    public ResponseEntity<Map<String, String>> edit(@PathVariable Integer id, @RequestBody QuejaDto dto,
+    public ResponseEntity<Map<String, String>> edit(@PathVariable Integer id, @Valid @RequestBody QuejaDto dto,
                                                     @AuthenticationPrincipal UserPrincipal principal) {
         Permissions.requireAdmin(principal);
 
