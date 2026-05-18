@@ -33,9 +33,13 @@ USER app
 
 EXPOSE 8080
 
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom" \
+# TZ alinea la zona horaria del SO; -Duser.timezone hace lo mismo a nivel JVM
+# (LocalDateTime.now() lee user.timezone). Sin esto, el contenedor corre en UTC
+# y los timestamps que ve el usuario quedan 6 horas adelantados.
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+UseG1GC -Djava.security.egd=file:/dev/./urandom -Duser.timezone=America/Mexico_City" \
     SPRING_PROFILES_ACTIVE=prod \
-    UPLOAD_DIR=/app/uploads
+    UPLOAD_DIR=/app/uploads \
+    TZ=America/Mexico_City
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8080/actuator/health || exit 1

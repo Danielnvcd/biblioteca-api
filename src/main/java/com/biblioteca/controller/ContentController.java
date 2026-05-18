@@ -151,7 +151,7 @@ public class ContentController {
                                                           @AuthenticationPrincipal UserPrincipal principal) {
         Content content = contentRepository.findById(contentId)
                 .orElseThrow(() -> ApiException.notFound("Contenido no encontrado"));
-        if (!COMMENTABLE_CATEGORIES.contains(content.getCategory().toLowerCase())) {
+        if (!COMMENTABLE_CATEGORIES.contains(content.getCategory().toLowerCase(java.util.Locale.ROOT))) {
             throw ApiException.badRequest("Esta categoría no admite comentarios");
         }
         Comment comment = new Comment();

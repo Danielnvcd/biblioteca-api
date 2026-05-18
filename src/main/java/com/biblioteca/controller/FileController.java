@@ -63,7 +63,7 @@ public class FileController {
 
     @GetMapping("/{category}/{filename}")
     public ResponseEntity<Resource> getFile(@PathVariable String category, @PathVariable String filename, @RequestParam(value = "thumb", required = false, defaultValue = "false") boolean thumb) {
-        String cat = category.toLowerCase();
+        String cat = category.toLowerCase(java.util.Locale.ROOT);
         if (!PUBLIC_CATEGORIES.contains(cat)) {
             UserPrincipal principal = currentPrincipal();
             if (principal == null) {
@@ -105,7 +105,7 @@ public class FileController {
     }
 
     private String determineContentType(String filename) {
-        String ext = filename.contains(".") ? filename.substring(filename.lastIndexOf('.') + 1).toLowerCase() : "";
+        String ext = filename.contains(".") ? filename.substring(filename.lastIndexOf('.') + 1).toLowerCase(java.util.Locale.ROOT) : "";
         return switch (ext) {
             case "pdf" -> "application/pdf";
             case "jpg", "jpeg" -> "image/jpeg";
