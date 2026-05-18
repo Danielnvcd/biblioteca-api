@@ -23,8 +23,8 @@ RUN apt-get update \
 # Run as non-root
 RUN groupadd --system app && useradd --system --gid app --home /app app
 
-# Persistent uploads (mount a volume on this path)
-RUN mkdir -p /app/uploads && chown -R app:app /app
+# Persistent uploads + access logs (mount volumes on these paths)
+RUN mkdir -p /app/uploads /app/logs && chown -R app:app /app
 
 COPY --from=build /workspace/target/*.jar app.jar
 RUN chown app:app app.jar

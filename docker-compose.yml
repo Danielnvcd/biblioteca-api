@@ -43,6 +43,9 @@ services:
       MANAGEMENT_HEALTH_REDIS_ENABLED: ${MANAGEMENT_HEALTH_REDIS_ENABLED:-false}
     volumes:
       - uploads:/app/uploads
+      # Access logs de Tomcat (METHOD path status tiempo). Bind-mount al host
+      # para que puedas tail -f sin entrar al contenedor.
+      - ./logs:/app/logs
     ports:
       # Bind a 127.0.0.1 — el backend solo lo ve Nginx en el mismo host. Sin
       # esto el puerto 8080 quedaría expuesto a 0.0.0.0 y cualquiera con la IP

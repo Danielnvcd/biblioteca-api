@@ -8,6 +8,19 @@ server:
     include-stacktrace: never
     include-exception: false
   forward-headers-strategy: framework   # honor X-Forwarded-* from a reverse proxy
+  tomcat:
+    accesslog:
+      enabled: true
+      directory: /app/logs
+      prefix: access
+      suffix: .log
+      # %t time, %a IP del cliente real (gracias a forward-headers-strategy),
+      # %r request line (METHOD path HTTP/x.x), %s status, %D tiempo en ms,
+      # %B bytes enviados, %{User-Agent}i UA del cliente.
+      pattern: '%t %a "%r" %s %D ms %B bytes "%{User-Agent}i"'
+      rotate: true
+      file-date-format: .yyyy-MM-dd
+      max-days: 14
 
 spring:
   jpa:
