@@ -12,6 +12,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Tags every request with a stable id so we can correlate logs across threads
@@ -29,11 +30,16 @@ public class RequestIdFilter extends OncePerRequestFilter {
     public static final String MDC_KEY = "requestId";
     public static final String HEADER  = "X-Request-Id";
 
+    // Restringimos a chars seguros para logs/headers (UUIDs y los IDs típicos
+    // de proxies/LBs entran limpio: hex + guiones + punto + underscore).
+    // Cualquier cosa fuera de eso → generamos uno nuevo en vez de reflejar.
+    private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9._\\-]+");
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
         String id = request.getHeader(HEADER);
-        if (id == null || id.isBlank() || id.length() > 64) {
+        if (id == null || id.isBlank() || id.length() > 64 || !SAFE_ID.matcher(id).matches()) {
             id = UUID.randomUUID().toString();
         }
         MDC.put(MDC_KEY, id);

@@ -7,6 +7,7 @@ import com.biblioteca.repository.UserRepository;
 import com.biblioteca.security.RefreshTokenService;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.RefreshCookieFactory;
+import com.biblioteca.security.TrustedOriginValidator;
 import com.biblioteca.security.UserPrincipal;
 import com.biblioteca.service.AuditService;
 import com.biblioteca.service.AuthService;
@@ -16,6 +17,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpHeaders;
 import org.springframework.validation.annotation.Validated;
@@ -45,12 +47,14 @@ public class AuthController {
     private final QrCodeService qrCodeService;
     private final RefreshCookieFactory refreshCookieFactory;
     private final RefreshTokenService refreshTokenService;
+    private final TrustedOriginValidator originValidator;
 
     public AuthController(AuthService authService, UserRepository userRepository,
                           AuditService auditService, FileStorageService fileStorageService,
                           PasswordEncoder passwordEncoder, QrCodeService qrCodeService,
                           RefreshCookieFactory refreshCookieFactory,
-                          RefreshTokenService refreshTokenService) {
+                          RefreshTokenService refreshTokenService,
+                          TrustedOriginValidator originValidator) {
         this.authService = authService;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -59,6 +63,7 @@ public class AuthController {
         this.qrCodeService = qrCodeService;
         this.refreshCookieFactory = refreshCookieFactory;
         this.refreshTokenService = refreshTokenService;
+        this.originValidator = originValidator;
     }
 
     @PostMapping("/login")
@@ -85,13 +90,19 @@ public class AuthController {
     public ResponseEntity<LoginResponse> refresh(
             @CookieValue(value = RefreshCookieFactory.COOKIE_NAME, required = false) String currentRefresh,
             HttpServletRequest req) {
+        // Anti-CSRF para endpoints permitAll con cookie SameSite=None:
+        // si llega Origin, debe estar en la allowlist de CORS. Sin Origin
+        // (curl, server-to-server) se permite.
+        originValidator.requireTrustedOrigin(req);
         AuthService.AuthResult result = authService.refresh(currentRefresh, req.getRemoteAddr(), req.getHeader("User-Agent"));
         return withOptionalRefreshCookie(result);
     }
 
     @PostMapping("/logout")
     public ResponseEntity<Map<String, String>> logout(
-            @CookieValue(value = RefreshCookieFactory.COOKIE_NAME, required = false) String currentRefresh) {
+            @CookieValue(value = RefreshCookieFactory.COOKIE_NAME, required = false) String currentRefresh,
+            HttpServletRequest req) {
+        originValidator.requireTrustedOrigin(req);
         authService.logout(currentRefresh);
         ResponseCookie deletion = refreshCookieFactory.buildDeletion();
         return ResponseEntity.ok()
@@ -167,6 +178,43 @@ public class AuthController {
         }
     }
 
+    // Lockout por usuario para /change-password (defensa contra brute-force
+    // de currentPassword usando un access token robado). Después de 5 fallos
+    // consecutivos bloqueamos durante 15 minutos. Cualquier éxito (verificación
+    // OK) resetea el contador. Solo aplica a self-change — el super_admin
+    // cambiando contraseñas ajenas no pasa por este flujo (no usa currentPassword).
+    private static final int MAX_PASSWORD_ATTEMPTS = 5;
+    private static final Duration PASSWORD_LOCKOUT = Duration.ofMinutes(15);
+
+    private void enforcePasswordLockout(User user) {
+        LocalDateTime until = user.getPasswordLockedUntil();
+        if (until != null && until.isAfter(LocalDateTime.now())) {
+            throw ApiException.forbidden(
+                "Demasiados intentos fallidos. Intenta de nuevo más tarde.");
+        }
+    }
+
+    private void verifyCurrentPasswordWithLockout(User user, String current) {
+        enforcePasswordLockout(user);
+        if (current == null || current.isBlank()) {
+            throw ApiException.badRequest("Ingresa tu contraseña actual");
+        }
+        if (!passwordEncoder.matches(current, user.getPasswordHash())) {
+            int attempts = user.getFailedPasswordAttempts() + 1;
+            user.setFailedPasswordAttempts(attempts);
+            if (attempts >= MAX_PASSWORD_ATTEMPTS) {
+                user.setPasswordLockedUntil(LocalDateTime.now().plus(PASSWORD_LOCKOUT));
+            }
+            userRepository.save(user);
+            throw ApiException.unauthorized("Contraseña actual incorrecta");
+        }
+        // Éxito → reset si traía estado.
+        if (user.getFailedPasswordAttempts() != 0 || user.getPasswordLockedUntil() != null) {
+            user.setFailedPasswordAttempts(0);
+            user.setPasswordLockedUntil(null);
+        }
+    }
+
     @PostMapping("/register")
     public ResponseEntity<Map<String, String>> register(@Valid @RequestBody RegisterRequest body,
                                                         HttpServletRequest req,
@@ -213,13 +261,20 @@ public class AuthController {
         return ResponseEntity.ok(includeSensitive ? authService.toDto(user) : authService.toDirectoryDto(user));
     }
 
+    // Regex ultra-permisivo: solo bloquea < y > para que un nombre no pueda
+    // contener una etiqueta HTML literal. Acentos, espacios, números, puntuación
+    // normal entran limpio. React ya escapa en pantalla; esto es defensa en
+    // profundidad por si algún día el campo se renderiza en PDF, email, o
+    // cualquier contexto que no auto-escape.
+    private static final String SAFE_TEXT_REGEX = "[^<>]*";
+
     @PostMapping("/profile")
     public ResponseEntity<UserDto> updateProfile(@AuthenticationPrincipal UserPrincipal principal,
-                                                 @RequestParam(required = false) @Size(max = 150) String fullName,
-                                                 @RequestParam(required = false) @Size(max = 100) String area,
-                                                 @RequestParam(required = false) @Size(max = 100) String position,
-                                                 @RequestParam(required = false) @Size(max = 100) String factory,
-                                                 @RequestParam(required = false) @Size(max = 200) String contactInfo,
+                                                 @RequestParam(required = false) @Size(max = 150) @Pattern(regexp = SAFE_TEXT_REGEX, message = "Caracteres no permitidos") String fullName,
+                                                 @RequestParam(required = false) @Size(max = 100) @Pattern(regexp = SAFE_TEXT_REGEX, message = "Caracteres no permitidos") String area,
+                                                 @RequestParam(required = false) @Size(max = 100) @Pattern(regexp = SAFE_TEXT_REGEX, message = "Caracteres no permitidos") String position,
+                                                 @RequestParam(required = false) @Size(max = 100) @Pattern(regexp = SAFE_TEXT_REGEX, message = "Caracteres no permitidos") String factory,
+                                                 @RequestParam(required = false) @Size(max = 200) @Pattern(regexp = SAFE_TEXT_REGEX, message = "Caracteres no permitidos") String contactInfo,
                                                  @RequestParam(required = false) MultipartFile profilePic) {
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
@@ -254,8 +309,9 @@ public class AuthController {
         }
 
         // Self-change: require current password — prevents takeover via stolen JWT.
+        // Con lockout por usuario: 5 fallos consecutivos → 15 min bloqueado.
         if (self) {
-            verifyCurrentPassword(user, body.getCurrentPassword());
+            verifyCurrentPasswordWithLockout(user, body.getCurrentPassword());
         }
 
         user.setPasswordHash(passwordEncoder.encode(body.getNewPassword()));

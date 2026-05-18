@@ -102,7 +102,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegal(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        // No reflejamos e.getMessage() al cliente para no filtrar detalles
+        // internos si la excepción viene de una librería de terceros. El
+        // mensaje sí queda en el log del servidor para diagnóstico.
+        log.debug("IllegalArgumentException: {}", e.getMessage());
+        return ResponseEntity.badRequest().body(Map.of("error", "Argumento inválido"));
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)

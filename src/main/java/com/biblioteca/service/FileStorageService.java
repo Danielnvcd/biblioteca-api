@@ -26,6 +26,7 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -112,6 +113,13 @@ public class FileStorageService {
 
     private static final int THUMB_WIDTH = 400;
 
+    // Lock por path para generar thumbs sin que dos requests se pisen al escribir.
+    // Antes usábamos String.intern() — funcional pero crece el string pool del
+    // JVM sin liberar. Ahora un ConcurrentHashMap acotado por # de archivos
+    // reales (no por input del cliente: getThumbnailPath solo crea entrada
+    // cuando el original existe en disco).
+    private final ConcurrentHashMap<Path, Object> thumbLocks = new ConcurrentHashMap<>();
+
     /**
      * Devuelve el path del thumbnail (400px de ancho, JPG). Lo genera la
      * primera vez que se pide; las siguientes lo lee del disco.
@@ -141,9 +149,8 @@ public class FileStorageService {
             return thumbPath;
         }
 
-        // intern() garantiza que dos requests con el mismo path obtienen el mismo
-        // monitor — no Lock por archivo en un Map (overkill para el volumen actual).
-        synchronized (("thumb-lock:" + thumbPath).intern()) {
+        Object lock = thumbLocks.computeIfAbsent(thumbPath, k -> new Object());
+        synchronized (lock) {
             // Re-check: otro hilo pudo haberlo generado mientras esperábamos el lock.
             if (Files.exists(thumbPath)) {
                 return thumbPath;

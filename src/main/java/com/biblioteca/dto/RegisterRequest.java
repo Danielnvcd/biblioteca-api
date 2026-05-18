@@ -12,6 +12,8 @@ public class RegisterRequest {
 
     @NotBlank
     @Size(min = 8, max = 200, message = "La contraseña debe tener al menos 8 caracteres")
+    @Pattern(regexp = "^(?=.*[A-Za-z])(?=.*\\d).+$",
+             message = "La contraseña debe incluir al menos una letra y un número")
     private String password;
 
     /** Lo valida {@code Permissions.VALID_ROLES} en el controller, pero limitamos longitud aquí. */

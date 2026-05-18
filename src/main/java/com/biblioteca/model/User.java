@@ -50,6 +50,14 @@ public class User {
     @Column(name = "password_changed_at")
     private LocalDateTime passwordChangedAt;
 
+    /** Contador de fallos consecutivos al verificar currentPassword en /change-password. */
+    @Column(name = "failed_password_attempts", nullable = false)
+    private int failedPasswordAttempts = 0;
+
+    /** Si está en el futuro, /change-password rechaza el self-change hasta esa hora. */
+    @Column(name = "password_locked_until")
+    private LocalDateTime passwordLockedUntil;
+
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
     public String getUsername() { return username; }
@@ -76,4 +84,8 @@ public class User {
     public void setLastSeen(LocalDateTime lastSeen) { this.lastSeen = lastSeen; }
     public LocalDateTime getPasswordChangedAt() { return passwordChangedAt; }
     public void setPasswordChangedAt(LocalDateTime passwordChangedAt) { this.passwordChangedAt = passwordChangedAt; }
+    public int getFailedPasswordAttempts() { return failedPasswordAttempts; }
+    public void setFailedPasswordAttempts(int failedPasswordAttempts) { this.failedPasswordAttempts = failedPasswordAttempts; }
+    public LocalDateTime getPasswordLockedUntil() { return passwordLockedUntil; }
+    public void setPasswordLockedUntil(LocalDateTime passwordLockedUntil) { this.passwordLockedUntil = passwordLockedUntil; }
 }

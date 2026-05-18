@@ -15,7 +15,10 @@ import java.util.HexFormat;
  */
 public class WerkzeugCompatiblePasswordEncoder implements PasswordEncoder {
 
-    private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder();
+    // Cost 12 — login ~200ms (en HW moderno). El verifier de BCrypt lee el cost
+    // del propio hash, así que los hashes viejos con cost 10 siguen funcionando
+    // sin migración; este valor solo afecta a contraseñas nuevas.
+    private final BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder(12);
 
     @Override
     public String encode(CharSequence rawPassword) {

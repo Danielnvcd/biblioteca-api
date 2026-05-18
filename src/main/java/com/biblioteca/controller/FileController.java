@@ -83,9 +83,18 @@ public class FileController {
                 // El thumb generado siempre es JPG aunque el original sea .png/.gif,
                 // así que el content-type debe salir del archivo realmente servido.
                 String contentType = determineContentType(filePath.getFileName().toString());
+                // Filename llega como @PathVariable y se mete al header — saneamos
+                // comillas y CR/LF para que un nombre raro no rompa la cabecera.
+                String safeFilename = filename.replaceAll("[\"\\r\\n]", "_");
+                // Para documentos (PDF/Office) forzamos descarga: si un atacante
+                // logra subirlos como admin comprometido, no se renderizan en
+                // contexto del dominio de la API. Para imágenes/audio/video
+                // dejamos inline porque el frontend los embebe vía <img>/<video>.
+                String disposition = isDocumentExtension(filePath.getFileName().toString())
+                        ? "attachment" : "inline";
                 return ResponseEntity.ok()
                         .contentType(MediaType.parseMediaType(contentType))
-                        .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")
+                        .header(HttpHeaders.CONTENT_DISPOSITION, disposition + "; filename=\"" + safeFilename + "\"")
                         .cacheControl(CacheControl.maxAge(30, TimeUnit.DAYS).cachePrivate())
                         .header("X-Content-Type-Options", "nosniff")
                         .body(resource);
@@ -102,6 +111,16 @@ public class FileController {
         if (auth == null || !auth.isAuthenticated()) return null;
         Object p = auth.getPrincipal();
         return p instanceof UserPrincipal up ? up : null;
+    }
+
+    private static final Set<String> DOCUMENT_EXTENSIONS = Set.of(
+            "pdf", "doc", "docx", "xls", "xlsx", "xlsm", "ppt", "pptx");
+
+    private boolean isDocumentExtension(String filename) {
+        String ext = filename.contains(".")
+                ? filename.substring(filename.lastIndexOf('.') + 1).toLowerCase(java.util.Locale.ROOT)
+                : "";
+        return DOCUMENT_EXTENSIONS.contains(ext);
     }
 
     private String determineContentType(String filename) {
