@@ -5,6 +5,12 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    # TZ del SO del contenedor; -c timezone fuerza la TZ del servidor de
+    # Postgres (que NO hereda TZ del SO — por defecto usa 'UTC' del
+    # postgresql.conf de la imagen). Sin esto, NOW() y los TIMESTAMP sin TZ
+    # quedaban en UTC mientras el back (Java) corre en Mexico_City, generando
+    # desfases de 6h en password_changed_at, last_seen, etc.
+    command: postgres -c timezone='America/Mexico_City'
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-biblioteca_maxipet}
       POSTGRES_USER: ${POSTGRES_USER:-bibliotecario}
