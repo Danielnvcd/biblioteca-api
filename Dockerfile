@@ -17,7 +17,9 @@ WORKDIR /app
 # de qué herramientas trae la imagen base (eclipse-temurin a veces incluye
 # wget, a veces no, según la versión).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
+ && apt-get install -y --no-install-recommends curl tzdata \
+ && ln -snf /usr/share/zoneinfo/America/Mexico_City /etc/localtime \
+ && echo "America/Mexico_City" > /etc/timezone \
  && rm -rf /var/lib/apt/lists/*
 
 # Run as non-root
