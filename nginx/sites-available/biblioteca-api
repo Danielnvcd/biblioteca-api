@@ -1,0 +1,90 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# SITE CONFIG  →  va en  /etc/nginx/sites-available/biblioteca-api  del VPS
+# ═══════════════════════════════════════════════════════════════════════════
+# Y debe estar enlazado desde sites-enabled/ para que nginx lo cargue:
+#   sudo ln -s /etc/nginx/sites-available/biblioteca-api \
+#              /etc/nginx/sites-enabled/biblioteca-api
+#
+# Topología (Cloudflare Tunnel):
+#   Cliente ──HTTPS──► Cloudflare ──Tunnel──► cloudflared (en el VPS)
+#                                                  │
+#                                                  ▼ (127.0.0.1)
+#                                            nginx (127.0.0.1:80)
+#                                                  │
+#                                                  ▼
+#                                          Spring Boot (127.0.0.1:8080)
+#
+# Dominio público: api.bibliotecamaxipet.cloud (gestionado por el Tunnel).
+#
+# Notas:
+#   - El puerto 80 NO se expone al mundo: cloudflared se conecta localmente.
+#     Por eso `listen 127.0.0.1:80` en vez de `listen 80`.
+#   - X-Forwarded-Proto se hardcodea a https porque Cloudflare termina TLS.
+#   - client_max_body_size y set_real_ip_from están definidos en nginx.conf
+#     global (ver: nginx/nginx.conf). NO duplicarlos acá.
+# ═══════════════════════════════════════════════════════════════════════════
+
+upstream biblioteca_api {
+    server 127.0.0.1:8080;
+    keepalive 32;
+}
+
+server {
+    # Solo localhost — cloudflared se conecta acá, no hay tráfico público directo.
+    listen 127.0.0.1:80;
+    server_name api.bibliotecamaxipet.cloud;
+
+    proxy_connect_timeout 30s;
+    proxy_send_timeout    120s;
+    proxy_read_timeout    120s;
+
+    access_log /var/log/nginx/biblioteca-api.access.log;
+    error_log  /var/log/nginx/biblioteca-api.error.log warn;
+
+    # Headers de seguridad específicos del API (override de los globales de nginx.conf).
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options         "DENY"   always;
+    add_header Referrer-Policy         "strict-origin-when-cross-origin" always;
+
+    # Health check local (curl http://127.0.0.1/nginx-health desde el VPS).
+    location = /nginx-health {
+        access_log off;
+        return 200 "ok\n";
+        add_header Content-Type text/plain;
+    }
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # X-Accel-Redirect: FileController valida auth/roles, después responde
+    # con `X-Accel-Redirect: /_protected/...` y body vacío. nginx intercepta
+    # el header, hace una redirección interna acá y sirve el archivo con
+    # sendfile directo desde el disco. El thread de Tomcat se libera al
+    # mandar el header (~1ms), no se queda streameando el archivo.
+    #
+    # `internal` hace que esta location NO sea accesible desde el cliente —
+    # solo se llega vía X-Accel-Redirect interno.
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    location /_protected/ {
+        internal;
+        alias /srv/biblioteca-uploads/;
+
+        sendfile on;
+        tcp_nopush on;
+
+        # Content-Type y Content-Disposition los hereda del response de Spring
+        # (nginx no los pisa cuando vienen del upstream en una redirección interna).
+
+        access_log off;
+    }
+
+    location / {
+        proxy_pass         http://biblioteca_api;
+        proxy_http_version 1.1;
+        proxy_set_header   Connection        "";
+
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto https;
+        proxy_set_header   X-Forwarded-Host  $host;
+    }
+}

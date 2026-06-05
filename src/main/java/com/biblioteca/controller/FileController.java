@@ -3,6 +3,7 @@ package com.biblioteca.controller;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.UserPrincipal;
 import com.biblioteca.service.FileStorageService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.http.CacheControl;
@@ -13,6 +14,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -57,12 +59,27 @@ public class FileController {
 
     private final FileStorageService fileStorageService;
 
+    /**
+     * Si está activo, en vez de leer el archivo y devolverlo en el body, se
+     * responde con header `X-Accel-Redirect` apuntando a una location interna
+     * de nginx (sendfile directo desde disco). La auth/role checks siguen
+     * pasando por este controller — solo el byte streaming se delega a nginx.
+     *
+     * Se mantiene apagado en dev (no hay nginx en localhost), encendido en prod
+     * vía application-prod.yml.
+     */
+    @Value("${app.internal-redirect.enabled:false}")
+    private boolean internalRedirectEnabled;
+
+    @Value("${app.internal-redirect.prefix:/_protected}")
+    private String internalRedirectPrefix;
+
     public FileController(FileStorageService fileStorageService) {
         this.fileStorageService = fileStorageService;
     }
 
     @GetMapping("/{category}/{filename}")
-    public ResponseEntity<Resource> getFile(@PathVariable String category, @PathVariable String filename, @RequestParam(value = "thumb", required = false, defaultValue = "false") boolean thumb) {
+    public ResponseEntity<?> getFile(@PathVariable String category, @PathVariable String filename, @RequestParam(value = "thumb", required = false, defaultValue = "false") boolean thumb) {
         String cat = category.toLowerCase(java.util.Locale.ROOT);
         if (!PUBLIC_CATEGORIES.contains(cat)) {
             UserPrincipal principal = currentPrincipal();
@@ -78,27 +95,35 @@ public class FileController {
 
         try {
             Path filePath = thumb ? fileStorageService.getThumbnailPath(category, filename) : fileStorageService.getPath(category, filename);
-            Resource resource = new UrlResource(filePath.toUri());
-            if (resource.exists() && resource.isReadable()) {
-                // El thumb generado siempre es JPG aunque el original sea .png/.gif,
-                // así que el content-type debe salir del archivo realmente servido.
-                String contentType = determineContentType(filePath.getFileName().toString());
-                // Filename llega como @PathVariable y se mete al header — saneamos
-                // comillas y CR/LF para que un nombre raro no rompa la cabecera.
-                String safeFilename = filename.replaceAll("[\"\\r\\n]", "_");
-                // Para documentos (PDF/Office) forzamos descarga: si un atacante
-                // logra subirlos como admin comprometido, no se renderizan en
-                // contexto del dominio de la API. Para imágenes/audio/video
-                // dejamos inline porque el frontend los embebe vía <img>/<video>.
-                String disposition = isDocumentExtension(filePath.getFileName().toString())
-                        ? "attachment" : "inline";
-                return ResponseEntity.ok()
-                        .contentType(MediaType.parseMediaType(contentType))
-                        .header(HttpHeaders.CONTENT_DISPOSITION, disposition + "; filename=\"" + safeFilename + "\"")
-                        .cacheControl(CacheControl.maxAge(30, TimeUnit.DAYS).cachePrivate())
-                        .header("X-Content-Type-Options", "nosniff")
-                        .body(resource);
+            if (!Files.exists(filePath) || !Files.isReadable(filePath)) {
+                return ResponseEntity.notFound().build();
             }
+            // El thumb generado siempre es JPG aunque el original sea .png/.gif,
+            // así que el content-type debe salir del archivo realmente servido.
+            String servedName = filePath.getFileName().toString();
+            String contentType = determineContentType(servedName);
+            // Filename llega como @PathVariable y se mete al header — saneamos
+            // comillas y CR/LF para que un nombre raro no rompa la cabecera.
+            String safeFilename = filename.replaceAll("[\"\\r\\n]", "_");
+            // Para documentos (PDF/Office) forzamos descarga: si un atacante
+            // logra subirlos como admin comprometido, no se renderizan en
+            // contexto del dominio de la API. Para imágenes/audio/video
+            // dejamos inline porque el frontend los embebe vía <img>/<video>.
+            String disposition = isDocumentExtension(servedName) ? "attachment" : "inline";
+
+            ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, disposition + "; filename=\"" + safeFilename + "\"")
+                    .cacheControl(CacheControl.maxAge(30, TimeUnit.DAYS).cachePrivate())
+                    .header("X-Content-Type-Options", "nosniff");
+
+            if (internalRedirectEnabled) {
+                // nginx intercepta el header, hace una redirección interna y sirve
+                // el archivo con sendfile. El thread del Tomcat se libera ya.
+                String redirectPath = internalRedirectPrefix + "/" + fileStorageService.relativizeFromRoot(filePath);
+                return builder.header("X-Accel-Redirect", redirectPath).build();
+            }
+            return builder.body(new UrlResource(filePath.toUri()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
         } catch (Exception ignored) {

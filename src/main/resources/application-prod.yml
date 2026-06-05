@@ -65,6 +65,14 @@ app:
     # Unset by default in prod. Set ADMIN_INITIAL_PASSWORD on first boot only;
     # leaving it unset means no automatic admin is created.
     initial-password: ${ADMIN_INITIAL_PASSWORD:}
+  # En prod, FileController responde con X-Accel-Redirect en lugar de servir el
+  # archivo desde la JVM. nginx hace sendfile directo desde disco, liberando
+  # el thread de Tomcat. La auth/role checks siguen pasando por Spring.
+  # Requiere que nginx tenga `location /_protected/ { internal; alias ...; }`
+  # apuntando al mismo path del filesystem donde Spring guarda los uploads.
+  internal-redirect:
+    enabled: true
+    prefix: /_protected
   rate-limit:
     enabled: true
     # IMPORTANTE: si esta app corre con más de una instancia en prod, setear

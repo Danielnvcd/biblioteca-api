@@ -14,6 +14,7 @@ import java.io.File;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -214,6 +215,25 @@ public class FileStorageService {
 
     public Path getPath(String category, String filename) {
         return resolvePath(category, filename);
+    }
+
+    /**
+     * Devuelve el path relativo al uploadRoot, con cada segmento URL-encodeado,
+     * para usar como path interno en el header X-Accel-Redirect (nginx sendfile).
+     * Ej: /app/uploads/perfiles/mi foto.jpg → "perfiles/mi%20foto.jpg"
+     */
+    public String relativizeFromRoot(Path absolutePath) {
+        Path normalized = absolutePath.normalize();
+        if (!normalized.startsWith(uploadRoot)) {
+            throw new IllegalArgumentException("Path fuera del upload root");
+        }
+        String rel = uploadRoot.relativize(normalized).toString().replace(java.io.File.separatorChar, '/');
+        StringBuilder encoded = new StringBuilder();
+        for (String segment : rel.split("/")) {
+            if (encoded.length() > 0) encoded.append('/');
+            encoded.append(URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20"));
+        }
+        return encoded.toString();
     }
 
     private Path resolveCategoryDir(String category) {

@@ -30,6 +30,11 @@ services:
   api:
     build: .
     restart: unless-stopped
+    # UID/GID fijo para que los archivos creados en el bind-mount de uploads
+    # tengan ownership predecible. El user `app` del Dockerfile se sobreescribe
+    # a 1000:1000; nginx (www-data) en el host puede leer porque el umask 022
+    # deja los archivos en 644 (others read).
+    user: "1000:1000"
     depends_on:
       db:
         condition: service_healthy
@@ -48,7 +53,11 @@ services:
       # Sólo poner =true en el .env si REALMENTE corrés Redis (RATE_LIMIT_BACKEND=redis).
       MANAGEMENT_HEALTH_REDIS_ENABLED: ${MANAGEMENT_HEALTH_REDIS_ENABLED:-false}
     volumes:
-      - uploads:/app/uploads
+      # Bind-mount al host para que nginx pueda servir los uploads vía
+      # X-Accel-Redirect (sendfile directo, sin pasar por la JVM). El path del
+      # host debe existir antes del primer up y tener permisos para UID 1000.
+      # Crear con: sudo mkdir -p /srv/biblioteca-uploads && sudo chown 1000:1000 /srv/biblioteca-uploads
+      - /srv/biblioteca-uploads:/app/uploads
       # Access logs de Tomcat (METHOD path status tiempo). Bind-mount al host
       # para que puedas tail -f sin entrar al contenedor.
       - ./logs:/app/logs
@@ -63,4 +72,3 @@ services:
 
 volumes:
   db-data:
-  uploads:
