@@ -73,6 +73,14 @@ server {
         # Content-Type y Content-Disposition los hereda del response de Spring
         # (nginx no los pisa cuando vienen del upstream en una redirección interna).
 
+        # CORS — Spring configura los headers de CORS en SecurityConfig pero NO se
+        # preservan a través del X-Accel-Redirect. Los forzamos acá para que el
+        # frontend (https://bibliotecamaxipet.cloud) pueda cargar las imágenes vía
+        # axios/XMLHttpRequest (que valida CORS estricto, distinto de <img src>).
+        add_header Access-Control-Allow-Origin      "https://bibliotecamaxipet.cloud" always;
+        add_header Access-Control-Allow-Credentials "true" always;
+        add_header Vary                              Origin always;
+
         access_log off;
     }
 
