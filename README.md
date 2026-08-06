@@ -36,7 +36,6 @@ El schema lo gestiona Flyway (ver sección **Migraciones de BD** abajo); Hiberna
 | `JWT_EXPIRATION_MS` | `900000` (15min) | Access token TTL |
 | `JWT_REFRESH_EXPIRATION_MS` | `604800000` (7d) | Refresh token TTL |
 | `APP_ENCRYPTION_KEY` | dev fallback | **Obligatorio en prod**. Base64 de 32 bytes. Cifra secretos TOTP en BD. **NO la cambies después del primer deploy** (invalidaría todos los 2FA). |
-| `ADMIN_INITIAL_PASSWORD` | dev: `Admin1234!` / prod: vacío | Solo se usa al crear el admin en una BD vacía. Una vez creado, se ignora. En prod déjalo vacío salvo en el primer arranque. |
 | `UPLOAD_DIR` | `./uploads` | Carpeta de archivos subidos (montar volumen) |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | CSV. En prod: el dominio público real. |
 | `RATE_LIMIT_ENABLED` | `false` (dev) / `true` (prod) | Bucket4j por IP+endpoint |
@@ -59,7 +58,39 @@ openssl rand -base64 32    # APP_ENCRYPTION_KEY
 $env:JAVA_HOME="C:\Program Files\Java\jdk-17"; .\mvnw.cmd spring-boot:run
 ```
 
-En dev, el primer arranque crea `admin` / `Admin1234!` automáticamente (ese password viene de la variable `ADMIN_INITIAL_PASSWORD`, hard-coded en `application.yml` solo para dev). **Cámbialo después del primer login.**
+La aplicación **no crea ningún usuario automáticamente**. Contra una base vacía no hay forma de entrar hasta que exista el primer usuario — ver [Crear el primer usuario](#crear-el-primer-usuario).
+
+## Crear el primer usuario
+
+La aplicación **no da de alta ningún usuario por su cuenta**. Antes existía un
+`DataInitializer` que creaba `admin` en cualquier base vacía tomando la
+contraseña de `ADMIN_INITIAL_PASSWORD` — y en el perfil `dev` esa variable traía
+`Admin1234!` escrito en el YAML. Cualquier despliegue de desarrollo nacía con un
+usuario administrador de credencial conocida y nombre predecible. Se eliminó.
+
+La consecuencia es que **contra una base vacía nadie puede entrar** hasta que se
+inserte el primer usuario a mano. Una sola vez por instalación:
+
+```bash
+# 1. Generar el hash BCrypt (coste 12, el mismo que usa la aplicación).
+python3 -c "import bcrypt,getpass; print(bcrypt.hashpw(getpass.getpass('Password: ').encode(), bcrypt.gensalt(12)).decode())"
+
+# 2. Insertarlo. El rol tiene que ser uno de los válidos:
+#    user | admin | super_admin | almacen_admin | almacen_user
+psql -U bibliotecario -d biblioteca_maxipet -c \
+  "INSERT INTO users (username, password_hash, role, full_name)
+   VALUES ('tu.usuario', '<hash-del-paso-1>', 'super_admin', 'Nombre Apellido');"
+```
+
+Con Docker, el paso 2 va por el contenedor:
+
+```bash
+docker compose exec -T db psql -U bibliotecario -d biblioteca_maxipet -c "INSERT INTO ..."
+```
+
+`getpass` se usa para que la contraseña no quede en el historial del shell. A
+partir de ese usuario, el resto se crean desde la propia aplicación (Usuarios →
+Nuevo usuario), que ya valida rol, longitud y unicidad.
 
 ## Build de producción
 
@@ -206,7 +237,7 @@ Una pasada de revisión pre-producción cubrió los siguientes puntos. Para deta
 - **CORS** configurable por `CORS_ORIGINS`. `Allow-Credentials: true`, lista explícita de orígenes (no wildcard).
 - **last_seen UPDATE directo** para evitar contención de fila.
 - **Audit log en transacción propia** (`REQUIRES_NEW`); fallos no rompen la operación.
-- **Validador de secretos en arranque (`prod`)**: si `JWT_SECRET`, `APP_ENCRYPTION_KEY` o `ADMIN_INITIAL_PASSWORD` resuelven a los fallbacks de dev, la app rechaza arrancar.
+- **Validador de secretos en arranque (`prod`)**: si `JWT_SECRET` o `APP_ENCRYPTION_KEY` resuelven a los fallbacks de dev, la app rechaza arrancar.
 - **Integridad referencial**: FK con `ON DELETE CASCADE` para `refresh_tokens` y `correction_activity`. `UNIQUE(questionnaire_id, user_name)` en respuestas de cuestionario.
 
 ## Migraciones de BD (Flyway)
@@ -216,7 +247,7 @@ El schema vive en `src/main/resources/db/migration/` con convención `V{n}__desc
 **Reglas:**
 - Una vez aplicado un `V{n}__*.sql` (en cualquier entorno), **no se edita**. Cualquier cambio va en un nuevo `V{n+1}__*.sql`.
 - DDL idempotente cuando aplique (`IF NOT EXISTS`, `WHERE NOT EXISTS`) para que el script sobreviva re-corridas en BDs heterogéneas.
-- Cambios de datos (seeds, backfills) también como migración. Sólo el bootstrap del admin se queda en `DataInitializer` porque depende del `PasswordEncoder` en runtime.
+- Cambios de datos (seeds, backfills) también como migración.
 
 **Estado del schema:** Flyway registra cada migración aplicada en la tabla `flyway_schema_history`.
 
@@ -260,7 +291,6 @@ Si hay diferencias significativas (columnas distintas, tipos distintos), corrige
 1. Flyway crea `flyway_schema_history` vacía.
 2. Ejecuta V1 → V2 → V3 → V4.
 3. Hibernate `validate` pasa.
-4. `DataInitializer` crea el admin si `ADMIN_INITIAL_PASSWORD` está seteado.
 
 ---
 
@@ -298,11 +328,9 @@ DB_USERNAME=biblioteca_user
 DB_PASSWORD=<password>
 CORS_ORIGINS=https://tu-app.vercel.app    # o el custom domain del frontend, exacto, sin barra final, sin *
 UPLOAD_DIR=/var/biblioteca-api/uploads
-# Solo en el PRIMER arranque para crear el admin:
-ADMIN_INITIAL_PASSWORD=<password-fuerte-temporal>
 ```
 
-Después del primer login del admin, **borra `ADMIN_INITIAL_PASSWORD` del entorno** y reinicia. La app ya no la necesita.
+La aplicación no crea ningún usuario sola: el primer acceso se da de alta a mano contra la base (ver abajo).
 
 ## Configuración de Nginx
 

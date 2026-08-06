@@ -61,6 +61,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
                     SecurityContextHolder.getContext().setAuthentication(auth);
+
+                    // Se marca DESPUÉS de autenticar: solo cuenta como actividad
+                    // un request con token válido y no invalidado por cambio de
+                    // contraseña. Va throttleado adentro (2 min por usuario).
+                    sessions.markActive(state);
                 }
             }
         } catch (Exception ex) {

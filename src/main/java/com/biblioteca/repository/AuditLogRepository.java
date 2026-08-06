@@ -12,6 +12,15 @@ import java.util.List;
 public interface AuditLogRepository extends JpaRepository<AuditLog, Integer> {
     List<AuditLog> findAllByOrderByCreatedAtDesc();
 
+    /**
+     * Eventos de un usuario puntual, más recientes primero. Alimenta el panel
+     * "mi actividad" del perfil: la bitácora completa sigue siendo exclusiva de
+     * super_admin, esto solo devuelve lo propio.
+     *
+     * El campo se llama `user` en la entidad pero mapea a la columna `username`.
+     */
+    Page<AuditLog> findByUserOrderByCreatedAtDesc(String user, Pageable pageable);
+
     @Query("SELECT l FROM AuditLog l ORDER BY l.createdAt DESC")
     List<AuditLog> findRecent(Pageable pageable);
 

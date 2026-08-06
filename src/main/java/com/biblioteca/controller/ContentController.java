@@ -89,9 +89,18 @@ public class ContentController {
             return dto;
         });
 
+        // Conteo por sub-categoría para los chips del frontend. Va aparte de
+        // `categorias` (que sigue igual) para no romper a ningún consumidor que
+        // ya lea esa lista. La clave "" son los archivos sin categoría asignada.
+        Map<String, Long> categoriaCounts = new LinkedHashMap<>();
+        for (Object[] row : contentRepository.countByManualCategory(category, search)) {
+            categoriaCounts.put((String) row[0], (Long) row[1]);
+        }
+
         Map<String, Object> response = new HashMap<>();
         response.put("items", items);
         response.put("categorias", categorias);
+        response.put("categoriaCounts", categoriaCounts);
         return ResponseEntity.ok(response);
     }
 

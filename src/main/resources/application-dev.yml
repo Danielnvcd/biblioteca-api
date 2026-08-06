@@ -10,9 +10,6 @@ app:
     # Dev fallback so local runs work without env wiring. Never use outside the
     # explicit dev profile.
     key: ${APP_ENCRYPTION_KEY:Zm9yLWRldi1vbmx5LWRvLW5vdC11c2UtaW4tcHJvZCE=}
-  admin:
-    # First-boot convenience for local development only.
-    initial-password: ${ADMIN_INITIAL_PASSWORD:Admin1234!}
 
 management:
   endpoint:

@@ -14,3 +14,8 @@ uploads/*
 application-local.yml
 .env
 .claude/*
+
+/biblioteca_maxipet.sql
+/biblioteca-uploads/
+
+/docker-compose.local.yml

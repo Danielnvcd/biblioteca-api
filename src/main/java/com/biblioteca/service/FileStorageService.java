@@ -25,6 +25,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -45,6 +46,29 @@ public class FileStorageService {
     private static final Set<String> ALLOWED_CATEGORIES = Set.of(
             "documentos", "manuales", "cursos", "boletin", "lecciones",
             "almacenes", "quejas", "seguridad", "perfiles");
+
+    /**
+     * Restricciones de extensión MÁS estrictas que la allow-list global, por
+     * categoría. Se intersecan con {@code app.allowed-extensions} — nunca la
+     * amplían.
+     *
+     * `perfiles` es el caso importante: está en PUBLIC_CATEGORIES de
+     * FileController (se sirve SIN autenticación para que el <img src> del
+     * frontend funcione), y cualquier usuario logueado puede subir ahí vía
+     * POST /api/auth/profile. Con la allow-list global eso permitía publicar
+     * un PDF/DOCX/MP4 de hasta 50 MB en una URL pública del dominio de la
+     * empresa — hosting gratis para phishing y abuso de disco. Una foto de
+     * perfil solo necesita ser una imagen.
+     *
+     * Las demás categorías públicas (boletin, seguridad) SÍ alojan documentos
+     * y audio de forma legítima (ver SeguridadController: podcasts .mp3,
+     * manuales .pdf), así que no se restringen acá.
+     *
+     * Solo afecta subidas nuevas: los archivos ya almacenados se siguen
+     * sirviendo con normalidad.
+     */
+    private static final Map<String, Set<String>> CATEGORY_EXTENSIONS = Map.of(
+            "perfiles", Set.of("jpg", "jpeg", "png", "webp", "gif"));
     private static final DateTimeFormatter DTF = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
 
     @PostConstruct
@@ -77,6 +101,11 @@ public class FileStorageService {
             String ext = extensionOf(safeOriginal);
             if (ext.isEmpty() || !allowedExtensions.contains(ext)) {
                 throw ApiException.badRequest("Extensión no permitida: ." + ext);
+            }
+            Set<String> categoryLimit = CATEGORY_EXTENSIONS.get(
+                    category == null ? "" : category.toLowerCase(Locale.ROOT));
+            if (categoryLimit != null && !categoryLimit.contains(ext)) {
+                throw ApiException.badRequest("Extensión no permitida en esta sección: ." + ext);
             }
             validateMagicBytes(file, ext);
 

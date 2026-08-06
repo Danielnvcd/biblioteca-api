@@ -9,5 +9,8 @@ public record UserSecurityState(
         Integer id,
         String username,
         String role,
-        LocalDateTime passwordChangedAt) {
+        LocalDateTime passwordChangedAt,
+        /** Última actividad registrada. Viaja acá para que el filtro pueda
+         *  decidir si toca refrescarla sin hacer una consulta extra. */
+        LocalDateTime lastSeen) {
 }

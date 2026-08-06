@@ -13,6 +13,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Duration;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -31,6 +34,8 @@ import java.util.function.Supplier;
  */
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(RateLimitFilter.class);
 
     private final boolean enabled;
     private final ObjectMapper mapper;
@@ -53,6 +58,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
             // change-password lleva /{id} en el path, así que el matcher
             // contempla exact + startsWith("/").
             new Rule("/api/auth/change-password", () -> config(5,  Duration.ofMinutes(1))),
+            // disable-2fa valida un código TOTP de 6 dígitos. El lockout por
+            // cuenta que aplica ahí solo cuenta fallos de CONTRASEÑA: con la
+            // contraseña correcta, los intentos de código quedaban ilimitados y
+            // un espacio de 10^6 se recorre. Este bucket es el único techo.
+            new Rule("/api/auth/disable-2fa",     () -> config(5,  Duration.ofMinutes(1))),
     };
 
     private static BucketConfiguration config(long capacity, Duration window) {
@@ -76,7 +86,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             Rule rule = rules[i];
             if (matchesRule(path, rule.pathSuffix())) {
                 String key = clientIp(req) + "|" + i;
-                if (!store.tryConsume(key, rule.configSupplier())) {
+                if (!tryConsumeOrAllow(key, rule)) {
                     res.setStatus(429);
                     res.setContentType(MediaType.APPLICATION_JSON_VALUE);
                     res.setHeader("Retry-After", "60");
@@ -88,6 +98,30 @@ public class RateLimitFilter extends OncePerRequestFilter {
             }
         }
         chain.doFilter(req, res);
+    }
+
+    /**
+     * Consume una ficha del bucket. Si el store falla, DEJA PASAR el request.
+     *
+     * Importa con el backend Redis: sin esto, una caída de Redis hace que
+     * Lettuce lance excepción, la excepción sube por el filtro y /login empieza
+     * a contestar 500 — o sea que perder el limitador dejaría a todo el mundo
+     * afuera de la aplicación. Con backend memory el caso no existe.
+     *
+     * Se elige fail-open y no fail-closed porque el rate-limit por IP no es la
+     * única defensa contra fuerza bruta: el bloqueo por cuenta (10 intentos →
+     * 15 minutos) vive en Postgres y sigue funcionando aunque Redis no esté.
+     * Quedarse sin el limitador degrada la protección; quedarse sin login la
+     * elimina junto con el resto del sistema.
+     */
+    private boolean tryConsumeOrAllow(String key, Rule rule) {
+        try {
+            return store.tryConsume(key, rule.configSupplier());
+        } catch (RuntimeException ex) {
+            log.warn("Rate limiter no disponible ({}), se deja pasar el request a {}",
+                    ex.getClass().getSimpleName(), rule.pathSuffix());
+            return true;
+        }
     }
 
     /** Match exacto o prefijo seguido de "/" — soporta tanto /api/auth/login (exact)

@@ -33,15 +33,12 @@ public class ProdSecretsValidator {
 
     private final String jwtSecret;
     private final String encryptionKey;
-    private final String adminInitialPassword;
 
     public ProdSecretsValidator(
             @Value("${app.jwt.secret}") String jwtSecret,
-            @Value("${app.encryption.key}") String encryptionKey,
-            @Value("${app.admin.initial-password:}") String adminInitialPassword) {
+            @Value("${app.encryption.key}") String encryptionKey) {
         this.jwtSecret = jwtSecret;
         this.encryptionKey = encryptionKey;
-        this.adminInitialPassword = adminInitialPassword;
     }
 
     @PostConstruct
@@ -57,11 +54,6 @@ public class ProdSecretsValidator {
             throw new IllegalStateException(
                 "APP_ENCRYPTION_KEY is the dev fallback while running prod profile. "
               + "Generate one with `openssl rand -base64 32` and set APP_ENCRYPTION_KEY.");
-        }
-        if ("Admin1234!".equals(adminInitialPassword)) {
-            throw new IllegalStateException(
-                "ADMIN_INITIAL_PASSWORD is the dev default while running prod profile. "
-              + "Either set it to a strong value for first-boot only, or leave it empty.");
         }
         log.info("✅ prod secrets validated — no dev fallbacks detected.");
     }

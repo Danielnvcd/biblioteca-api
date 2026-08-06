@@ -43,7 +43,12 @@ public class QuejaController {
             @RequestParam(required = false) String estado,
             @RequestParam(required = false) String q,
             @PageableDefault(size = 20, sort = "fecha", direction = Sort.Direction.DESC)
-            Pageable pageable) {
+            Pageable pageable,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        // Las quejas llevan datos de cliente (nombre, motivo, evidencia). El resto
+        // del controller ya exigía admin para escribir; la lectura quedaba abierta
+        // a cualquier usuario autenticado, incluido el buscador libre por ?q=.
+        Permissions.requireAdmin(principal);
         String estadoFilter = (estado != null) ? estado.trim() : "";
         String search       = (q != null) ? q.trim() : "";
         Page<Queja> page = quejaRepository.search(estadoFilter, search, pageable);
@@ -112,7 +117,8 @@ public class QuejaController {
     }
 
     @GetMapping("/stats")
-    public ResponseEntity<Map<String, Long>> stats() {
+    public ResponseEntity<Map<String, Long>> stats(@AuthenticationPrincipal UserPrincipal principal) {
+        Permissions.requireAdmin(principal);
         List<Queja> all = quejaRepository.findAllByOrderByFechaDesc();
         Map<String, Long> m = Map.of(
             "total", (long) all.size(),
