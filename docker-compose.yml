@@ -68,8 +68,15 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DATABASE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-biblioteca_maxipet}
-      DB_USERNAME: ${POSTGRES_USER:-bibliotecario}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Rol con el que corre la APLICACIÓN. Por defecto es el dueño del esquema
+      # (comportamiento histórico). Para recortarlo a solo-DML, ver
+      # docs/DB-LEAST-PRIVILEGE.md y definir DB_USERNAME/DB_PASSWORD en .env.
+      DB_USERNAME: ${DB_USERNAME:-${POSTGRES_USER:-bibliotecario}}
+      DB_PASSWORD: ${DB_PASSWORD:-${POSTGRES_PASSWORD}}
+      # Rol con el que corre FLYWAY. Necesita DDL, así que es el dueño del
+      # esquema. Si no se define, cae al mismo de la aplicación.
+      DB_MIGRATION_USERNAME: ${DB_MIGRATION_USERNAME:-${POSTGRES_USER:-bibliotecario}}
+      DB_MIGRATION_PASSWORD: ${DB_MIGRATION_PASSWORD:-${POSTGRES_PASSWORD}}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (>= 64 chars base64)}
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in .env (openssl rand -base64 32)}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}

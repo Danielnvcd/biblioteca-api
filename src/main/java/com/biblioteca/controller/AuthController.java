@@ -111,11 +111,23 @@ public class AuthController {
             @CookieValue(value = RefreshCookieFactory.COOKIE_NAME, required = false) String currentRefresh,
             HttpServletRequest req) {
         originValidator.requireTrustedOrigin(req);
-        authService.logout(currentRefresh);
+        // El access token viaja en el header, no en la cookie: se lee acá para
+        // que el logout pueda invalidarlo además de matar el refresh token.
+        authService.logout(currentRefresh, bearerToken(req));
         ResponseCookie deletion = refreshCookieFactory.buildDeletion();
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, deletion.toString())
                 .body(Map.of("message", "Sesión cerrada"));
+    }
+
+    /** Access token del header Authorization, o null si no vino. */
+    private static String bearerToken(HttpServletRequest req) {
+        String header = req.getHeader(HttpHeaders.AUTHORIZATION);
+        if (header != null && header.startsWith("Bearer ")) {
+            String raw = header.substring(7).trim();
+            return raw.isEmpty() ? null : raw;
+        }
+        return null;
     }
 
     /**

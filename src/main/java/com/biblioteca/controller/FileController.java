@@ -24,36 +24,31 @@ import java.util.concurrent.TimeUnit;
 public class FileController {
 
     /**
-     * Categorías que pueden ser servidas sin autenticación. Cumplen DOS
-     * condiciones simultáneamente:
-     *   1. El frontend las renderiza con `<img src=...>` directo, que no
-     *      puede mandar Authorization header.
-     *   2. El contenido es genuinamente difundible dentro de la empresa.
+     * Categorías servidas SIN autenticación. Hoy está vacío: ningún archivo
+     * sale de esta API sin sesión válida.
      *
-     * Política de subida por categoría:
+     * Histórico de lo que hubo acá y por qué se fue:
      *
-     *   perfiles  → fotos de avatar de usuarios. NO incluir documentos
-     *               personales, INE, CURP, comprobantes de domicilio, ni
-     *               nada que identifique al usuario fuera del nombre.
+     *   boletin, seguridad → alojaban documentos internos reales (manuales,
+     *       podcasts, infografías). Su confidencialidad dependía solo de lo
+     *       difícil de adivinar del nombre del archivo, que no es un control
+     *       de acceso.
      *
-     *   boletin   → imágenes del newsletter interno. NO incluir datos de
-     *               clientes, números de empleado, salarios, ni evidencia
-     *               de incidentes.
+     *   perfiles → los avatares se pintaban con `<img src>` directo, que no
+     *       manda Authorization. Se resolvió del lado del frontend con el hook
+     *       useAvatarUrl (descarga autenticada + cache compartido por path),
+     *       así que ya no hace falta la excepción.
      *
-     *   seguridad → avisos generales (cartelería, infografías, manuales
-     *               sin datos personales). NO incluir reportes de incidentes
-     *               con nombres de personas o ubicaciones específicas.
+     * Se conserva el set en vez de borrar la rama: reabrir una categoría es
+     * una decisión que debe poder tomarse y revisarse en un solo lugar. Antes
+     * de agregar una, revisá que el contenido sea genuinamente difundible y
+     * que exista una razón técnica que impida la descarga autenticada.
      *
-     * Toda categoría con datos sensibles (quejas con evidencia de cliente,
-     * almacenes con info operativa, etc.) NO va aquí. El frontend debe
-     * descargarlas vía axios autenticado y convertirlas a blob URL para
-     * mostrarlas — ver useAuthenticatedImage en biblioteca-frontend.
-     *
-     * Antes de agregar una nueva categoría a este set, validar contra ambos
-     * criterios. Si tienes dudas, déjala fuera y usa el patrón de blob URL.
+     * ⚠️ Espejado en `PUBLIC_CATEGORIES` de filePresenter.jsx en
+     * biblioteca-frontend. Si cambia acá, tiene que cambiar allá EN EL MISMO
+     * despliegue.
      */
-    private static final Set<String> PUBLIC_CATEGORIES = Set.of(
-            "perfiles", "boletin", "seguridad");
+    private static final Set<String> PUBLIC_CATEGORIES = Set.of();
     /** Sub-conjunto de no-públicas que además requieren rol específico. */
     private static final Set<String> ROLE_RESTRICTED = Set.of("almacenes");
 

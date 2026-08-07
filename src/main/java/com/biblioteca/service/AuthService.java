@@ -6,6 +6,7 @@ import com.biblioteca.model.User;
 import com.biblioteca.repository.UserRepository;
 import com.biblioteca.security.EncryptionService;
 import com.biblioteca.security.JwtTokenProvider;
+import com.biblioteca.security.AccessTokenDenylistService;
 import com.biblioteca.security.RefreshTokenService;
 import com.biblioteca.security.TotpService;
 import org.slf4j.Logger;
@@ -27,17 +28,20 @@ public class AuthService {
     private final TotpService totpService;
     private final RefreshTokenService refreshTokenService;
     private final EncryptionService encryptionService;
+    private final AccessTokenDenylistService accessTokenDenylist;
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
                        JwtTokenProvider tokenProvider, TotpService totpService,
                        RefreshTokenService refreshTokenService,
-                       EncryptionService encryptionService) {
+                       EncryptionService encryptionService,
+                       AccessTokenDenylistService accessTokenDenylist) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
         this.totpService = totpService;
         this.refreshTokenService = refreshTokenService;
         this.encryptionService = encryptionService;
+        this.accessTokenDenylist = accessTokenDenylist;
         this.dummyHash = passwordEncoder.encode(java.util.UUID.randomUUID().toString());
     }
 
@@ -238,8 +242,18 @@ public class AuthService {
         return new AuthResult(new LoginResponse(token, toDto(user)), rotated.rawToken());
     }
 
-    public void logout(String currentRefresh) {
+    /**
+     * Cierra la sesión: revoca el refresh token y además invalida el access
+     * token que se está usando.
+     *
+     * Sin lo segundo, "cerrar sesión" solo impedía renovar: el access token ya
+     * emitido seguía siendo válido hasta 15 minutos más. Quien lo hubiera
+     * capturado conservaba el acceso durante ese rato, que es exactamente lo
+     * que el usuario cree estar cortando al pulsar el botón.
+     */
+    public void logout(String currentRefresh, String accessToken) {
         refreshTokenService.revoke(currentRefresh);
+        accessTokenDenylist.revoke(accessToken);
     }
 
     /**

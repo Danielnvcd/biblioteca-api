@@ -47,7 +47,8 @@ class AuthServiceDisable2faTest {
 
         authService = new AuthService(userRepository, passwordEncoder,
                 mock(JwtTokenProvider.class), totpService,
-                mock(RefreshTokenService.class), encryptionService);
+                mock(RefreshTokenService.class), encryptionService,
+                mock(com.biblioteca.security.AccessTokenDenylistService.class));
     }
 
     private static User conTotp() {

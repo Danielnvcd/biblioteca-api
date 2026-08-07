@@ -28,6 +28,19 @@ spring:
             non_contextual_creation: true
   flyway:
     enabled: true
+    # OJO: `user`/`password` de Flyway NO se definen acá a propósito.
+    #
+    # Spring solo mira si la propiedad es != null, no si tiene contenido: en
+    # cuanto existe, deriva un datasource propio para Flyway con ESE usuario y
+    # descarta el del datasource principal. Un valor por defecto acá (aunque
+    # fuera un fallback "inofensivo") pisa las credenciales de cualquier
+    # entorno que las provea por otra vía — los tests de integración con
+    # Testcontainers, que generan usuario y contraseña aleatorios, dejan de
+    # arrancar con "password authentication failed".
+    #
+    # La separación de roles se configura solo bajo el perfil prod, donde
+    # DB_USERNAME siempre viene del entorno. Ver application-prod.yml y
+    # docs/DB-LEAST-PRIVILEGE.md.
     baseline-on-migrate: true
     # Schema existente (prod / dev actual) se considera ya en V1. Flyway crea
     # flyway_schema_history en el primer arranque marcando V1 como baseline

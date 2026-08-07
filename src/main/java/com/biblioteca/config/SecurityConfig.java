@@ -59,6 +59,27 @@ public class SecurityConfig {
                 // si algún día un PDF/HTML servido desde aquí intenta usarlas.
                 .permissionsPolicyHeader(pp -> pp.policy(
                     "camera=(), microphone=(), geolocation=(), payment=(), usb=()"))
+                // CSP para una API que además sirve archivos subidos por usuarios.
+                //
+                // Esto NO protege al frontend (vive en otro dominio y trae su propia
+                // CSP): protege contra el contenido servido desde ESTE origen. Si
+                // alguien logra subir un HTML/SVG y hacer que un navegador lo abra
+                // directo desde el dominio de la API, sin CSP ese documento corre
+                // con scripts en el origen de la API y puede llamar a sus endpoints.
+                //
+                // default-src 'none' es el default correcto para un origen que solo
+                // devuelve JSON y bytes de archivos: nada de scripts, nada de
+                // subrecursos. frame-ancestors 'none' complementa al X-Frame-Options
+                // (que los navegadores modernos ya ignoran a favor de la CSP).
+                .contentSecurityPolicy(csp -> csp.policyDirectives(
+                    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"))
+                // Impide que otro sitio incruste los archivos de la API como
+                // subrecurso (<img>, <script>). Las categorías públicas siguen
+                // siendo alcanzables por navegación directa, pero dejan de ser
+                // hotlinkeables desde un origen ajeno.
+                .crossOriginResourcePolicy(corp -> corp.policy(
+                    org.springframework.security.web.header.writers
+                        .CrossOriginResourcePolicyHeaderWriter.CrossOriginResourcePolicy.SAME_SITE))
             )
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .exceptionHandling(eh -> eh.authenticationEntryPoint(authEntryPoint))
@@ -66,9 +87,17 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/api/auth/login", "/api/auth/verify-2fa",
                                  "/api/auth/refresh", "/api/auth/logout").permitAll()
-                // /api/files/** is open to support <img src> from browser; the controller
-                // applies per-category role checks (almacenes requires auth + role).
-                .requestMatchers("/api/files/**").permitAll()
+                // /api/files/** exige sesión. Antes era permitAll para que un
+                // <img src> del navegador pudiera cargar avatares y boletines
+                // sin header Authorization; el frontend ya los descarga
+                // autenticados (useAvatarUrl / useAuthenticatedBlob), así que
+                // la excepción dejó de hacer falta.
+                //
+                // Exigirlo ACÁ, y no solo en el controller, es defensa en
+                // profundidad: si mañana alguien agrega un endpoint bajo
+                // /api/files sin repetir el chequeo, sigue cubierto. El
+                // controller conserva las reglas por rol (almacenes).
+                .requestMatchers("/api/files/**").authenticated()
                 .requestMatchers("/actuator/health", "/actuator/info", "/error").permitAll()
                 .anyRequest().authenticated()
             )

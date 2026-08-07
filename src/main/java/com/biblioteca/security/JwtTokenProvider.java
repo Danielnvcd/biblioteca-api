@@ -12,6 +12,19 @@ import java.util.Date;
 @Component
 public class JwtTokenProvider {
 
+    /**
+     * Emisor y destinatario de los tokens. Con una sola aplicación firmando y
+     * validando, `iss`/`aud` no impiden ningún ataque hoy: quien pueda firmar un
+     * token con la clave correcta también puede poner los claims correctos.
+     *
+     * Se emiten y validan igual porque el día que esta clave se comparta con un
+     * segundo servicio (un job, otra API del mismo dominio), un token emitido
+     * para aquél dejaría de ser aceptable acá — sin `aud` sí lo sería, y ese es
+     * un fallo silencioso y difícil de ver venir.
+     */
+    public static final String ISSUER   = "biblioteca-api";
+    public static final String AUDIENCE = "biblioteca-app";
+
     private final SecretKey secretKey;
     private final long expirationMs;
 
@@ -28,6 +41,11 @@ public class JwtTokenProvider {
 
         return Jwts.builder()
                 .subject(userId.toString())
+                .issuer(ISSUER)
+                .audience().add(AUDIENCE).and()
+                // `jti` identifica a ESTE token. Es lo que permite que /logout
+                // invalide la sesión que se cierra sin tocar las demás.
+                .id(java.util.UUID.randomUUID().toString())
                 .claim("username", username)
                 .claim("role", role)
                 .claim("scope", "access")
@@ -48,6 +66,8 @@ public class JwtTokenProvider {
         Date expiry = new Date(now.getTime() + 5 * 60 * 1000L);
         return Jwts.builder()
                 .subject(userId.toString())
+                .issuer(ISSUER)
+                .audience().add(AUDIENCE).and()
                 .claim("username", username)
                 .claim("scope", "2fa-pending")
                 .claim("remember", remember)
@@ -73,6 +93,24 @@ public class JwtTokenProvider {
         return iat == null ? 0L : iat.getTime();
     }
 
+    /**
+     * Identificador único del token (`jti`), o null si no lo lleva.
+     *
+     * Devuelve null en los tokens emitidos antes de que existiera el claim: no
+     * se pueden revocar individualmente, pero se siguen aceptando hasta que
+     * expiran (≤15 min tras el despliegue). Rechazarlos habría cerrado la
+     * sesión de todo el mundo al desplegar, sin ganancia de seguridad.
+     */
+    public String getJtiFromToken(String token) {
+        return parseToken(token).getId();
+    }
+
+    /** Expiración del token en milisegundos epoch, o 0 si no la lleva. */
+    public long getExpirationEpochMillis(String token) {
+        Date exp = parseToken(token).getExpiration();
+        return exp == null ? 0L : exp.getTime();
+    }
+
     public Integer getUserIdFromToken(String token) {
         Claims claims = parseToken(token);
         return Integer.parseInt(claims.getSubject());
@@ -95,9 +133,22 @@ public class JwtTokenProvider {
         }
     }
 
+    /**
+     * Verifica firma, issuer, audience y expiración. Un token al que le falte
+     * `iss`/`aud`, o que los traiga distintos, es rechazado.
+     *
+     * Efecto puntual al desplegar: los access tokens emitidos antes de este
+     * cambio no traen esos claims y dejan de validar. El cliente recibe 401,
+     * su interceptor renueva contra /api/auth/refresh (el refresh token es
+     * opaco, no un JWT, así que no se ve afectado) y sigue trabajando. Solo
+     * vuelven a login quienes entraron sin "recordarme" y por tanto no tienen
+     * cookie de refresh.
+     */
     private Claims parseToken(String token) {
         return Jwts.parser()
                 .verifyWith(secretKey)
+                .requireIssuer(ISSUER)
+                .requireAudience(AUDIENCE)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();

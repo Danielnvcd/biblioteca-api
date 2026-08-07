@@ -23,6 +23,23 @@ server:
       max-days: 14
 
 spring:
+  flyway:
+    # Credenciales SEPARADAS de las de la aplicación.
+    #
+    # Las migraciones necesitan DDL (CREATE/ALTER TABLE); la aplicación en
+    # marcha solo necesita DML. Mientras las dos usen el mismo rol, ese rol
+    # puede reescribir el esquema en cada request — el peor día de un bug de
+    # inyección deja de ser "leer datos" y pasa a ser "DROP TABLE".
+    #
+    # Por defecto caen a las credenciales de la app, así que sin definir las
+    # DB_MIGRATION_* el comportamiento es idéntico al de siempre. Para
+    # recortar el privilegio de la app, ver docs/DB-LEAST-PRIVILEGE.md.
+    #
+    # Solo va en el perfil prod: acá DB_USERNAME/DB_PASSWORD siempre vienen del
+    # entorno. En los tests, definir estas propiedades pisaría las credenciales
+    # que genera Testcontainers (ver el comentario en application.yml).
+    user: ${DB_MIGRATION_USERNAME:${DB_USERNAME}}
+    password: ${DB_MIGRATION_PASSWORD:${DB_PASSWORD}}
   jpa:
     hibernate:
       ddl-auto: validate                # NEVER let Hibernate alter prod schema
