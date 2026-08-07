@@ -56,11 +56,6 @@ app:
     # Base64 of a random 256-bit key. Dev fallback so local runs work; prod
     # MUST set APP_ENCRYPTION_KEY (see application-prod.yml).
     key: ${APP_ENCRYPTION_KEY}
-  admin:
-    # Used only the first time the app boots against an empty users table.
-    # If unset, no admin is auto-created — set ADMIN_INITIAL_PASSWORD on first
-    # run and remove it afterwards.
-    initial-password: ${ADMIN_INITIAL_PASSWORD:}
   upload:
     dir: ${UPLOAD_DIR:./uploads}
   allowed-extensions: pdf,doc,docx,ppt,pptx,xls,xlsx,xlsm,jpg,png,mp4,mp3,wav,heic

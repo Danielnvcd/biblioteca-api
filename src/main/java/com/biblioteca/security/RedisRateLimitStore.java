@@ -4,6 +4,7 @@ import io.github.bucket4j.BucketConfiguration;
 import io.github.bucket4j.distributed.BucketProxy;
 import io.github.bucket4j.distributed.proxy.ProxyManager;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.util.function.Supplier;
@@ -23,7 +24,14 @@ public class RedisRateLimitStore implements RateLimitStore {
 
     private final ProxyManager<String> proxyManager;
 
-    public RedisRateLimitStore(ProxyManager<String> proxyManager) {
+    /**
+     * El @Lazy del punto de inyección acompaña al de RedisRateLimitConfig: sin
+     * él, este componente pide el ProxyManager al construirse —durante el
+     * arranque— y volvería a forzar la conexión a Redis en ese momento,
+     * anulando el diferido. Spring inyecta un proxy y la conexión real se abre
+     * en el primer tryConsume.
+     */
+    public RedisRateLimitStore(@Lazy ProxyManager<String> proxyManager) {
         this.proxyManager = proxyManager;
     }
 

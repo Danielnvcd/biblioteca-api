@@ -2,8 +2,13 @@ package com.biblioteca.controller;
 
 import com.biblioteca.dto.*;
 import com.biblioteca.exception.ApiException;
+import com.biblioteca.model.AuditLog;
 import com.biblioteca.model.User;
+import com.biblioteca.repository.AuditLogRepository;
 import com.biblioteca.repository.UserRepository;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import com.biblioteca.security.RefreshTokenService;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.RefreshCookieFactory;
@@ -48,13 +53,16 @@ public class AuthController {
     private final RefreshCookieFactory refreshCookieFactory;
     private final RefreshTokenService refreshTokenService;
     private final TrustedOriginValidator originValidator;
+    private final AuditLogRepository auditLogRepository;
 
     public AuthController(AuthService authService, UserRepository userRepository,
                           AuditService auditService, FileStorageService fileStorageService,
                           PasswordEncoder passwordEncoder, QrCodeService qrCodeService,
                           RefreshCookieFactory refreshCookieFactory,
                           RefreshTokenService refreshTokenService,
-                          TrustedOriginValidator originValidator) {
+                          TrustedOriginValidator originValidator,
+                          AuditLogRepository auditLogRepository) {
+        this.auditLogRepository = auditLogRepository;
         this.authService = authService;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -169,6 +177,122 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("message", "2FA activado correctamente"));
     }
 
+    /**
+     * Desactiva el 2FA de la propia cuenta. Exige contraseña + código vigente
+     * (ver AuthService.disable2fa para el porqué de las dos cosas).
+     *
+     * La contraseña pasa por el mismo lockout que /change-password: es otro
+     * endpoint donde se puede probar contraseñas con un token robado.
+     */
+    @PostMapping("/disable-2fa")
+    public ResponseEntity<Map<String, String>> disable2fa(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @Valid @RequestBody Disable2faRequest body,
+                                                          HttpServletRequest req) {
+        User user = userRepository.findById(principal.getId())
+                .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
+        verifyCurrentPasswordWithLockout(user, body.getCurrentPassword());
+        authService.disable2fa(user, body.getCode());
+        auditService.log(user.getUsername(), "2FA desactivado", req.getRemoteAddr());
+        return ResponseEntity.ok(Map.of("message", "Verificación en dos pasos desactivada"));
+    }
+
+    /**
+     * Reseteo administrativo del 2FA de otro usuario — el caso "perdí el
+     * teléfono", donde ni el dueño de la cuenta puede generar un código.
+     *
+     * Mismo criterio que /change-password: ni siquiera un super_admin puede
+     * tocar a un usuario protegido, para que comprometer una cuenta de
+     * super_admin no alcance para desarmarle el 2FA a los dueños del sistema.
+     */
+    @PostMapping("/reset-2fa/{id}")
+    public ResponseEntity<Map<String, String>> reset2fa(@PathVariable Integer id,
+                                                        @AuthenticationPrincipal UserPrincipal principal,
+                                                        HttpServletRequest req) {
+        Permissions.requireSuperAdmin(principal);
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
+
+        boolean self = principal.getId().equals(id);
+        if (!self && Permissions.isProtectedUsername(user.getUsername())) {
+            throw ApiException.forbidden("No se puede resetear el 2FA de un usuario protegido");
+        }
+
+        authService.clear2fa(user);
+        // Las sesiones abiertas del usuario se cierran: si el reseteo se pidió
+        // por sospecha de acceso indebido, dejarlas vivas anularía el punto.
+        refreshTokenService.revokeAllForUser(user.getId());
+        auditService.log(principal.getUsername(),
+                "Reseteó el 2FA de " + user.getUsername(), req.getRemoteAddr());
+        return ResponseEntity.ok(Map.of("message", "2FA reseteado. El usuario puede configurarlo de nuevo."));
+    }
+
+    /**
+     * Sesiones abiertas de la propia cuenta, para que el usuario pueda detectar
+     * un acceso que no reconoce.
+     */
+    @GetMapping("/sessions")
+    public ResponseEntity<List<SessionDto>> sessions(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @CookieValue(value = RefreshCookieFactory.COOKIE_NAME, required = false) String currentRefresh) {
+        Long currentId = refreshTokenService.sessionIdOf(currentRefresh);
+        List<SessionDto> sessions = refreshTokenService.activeSessions(principal.getId()).stream()
+                .map(rt -> {
+                    SessionDto dto = new SessionDto();
+                    dto.setIp(rt.getIp());
+                    dto.setUserAgent(rt.getUserAgent());
+                    dto.setCreatedAt(rt.getCreatedAt());
+                    dto.setExpiresAt(rt.getExpiresAt());
+                    dto.setCurrent(currentId != null && currentId.equals(rt.getId()));
+                    return dto;
+                })
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(sessions);
+    }
+
+    /** Cierra todas las sesiones del usuario menos la actual. */
+    @PostMapping("/sessions/revoke-others")
+    public ResponseEntity<Map<String, Object>> revokeOtherSessions(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @CookieValue(value = RefreshCookieFactory.COOKIE_NAME, required = false) String currentRefresh,
+            HttpServletRequest req) {
+        Long currentId = refreshTokenService.sessionIdOf(currentRefresh);
+        int closed = refreshTokenService.revokeOthers(principal.getId(), currentId);
+        auditService.log(principal.getUsername(),
+                "Cerró " + closed + " sesión(es) remota(s)", req.getRemoteAddr());
+
+        // Sin cookie de refresh no hay forma de saber cuál sesión es la actual,
+        // así que se cierran todas — es la opción segura, pero rompe la promesa
+        // de "la sesión actual sigue abierta". Se avisa para que el frontend
+        // pueda mandar al login en vez de dejar una pantalla que ya no responde.
+        boolean keptCurrent = currentId != null;
+        return ResponseEntity.ok(Map.of(
+                "message", closed == 0 ? "No había otras sesiones abiertas" : "Sesiones cerradas",
+                "closed", closed,
+                "keptCurrent", keptCurrent));
+    }
+
+    /**
+     * Últimos movimientos de la propia cuenta. La bitácora completa sigue
+     * siendo de super_admin (ver AuditLogController): esto filtra por el
+     * usuario autenticado, nunca recibe de quién listar.
+     */
+    @GetMapping("/activity")
+    public ResponseEntity<PagedResponse<AuditLog>> myActivity(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PageableDefault(size = 10) Pageable pageable) {
+        // Paginado porque la bitácora crece sin techo: las cuentas con más uso
+        // ya rondan los 100 eventos y traerlos todos para mostrar los últimos
+        // diez es tirar trabajo y ancho de banda a la basura.
+        //
+        // El orden lo fija el nombre del método (OrderByCreatedAtDesc), no el
+        // Pageable: así un ?sort= en la URL no puede reordenar la bitácora ni
+        // apuntar a una columna que no corresponde.
+        return ResponseEntity.ok(PagedResponse.from(
+                auditLogRepository.findByUserOrderByCreatedAtDesc(
+                        principal.getUsername(),
+                        PageRequest.of(pageable.getPageNumber(), Math.min(pageable.getPageSize(), 50)))));
+    }
+
     private void verifyCurrentPassword(User user, String current) {
         if (current == null || current.isBlank()) {
             throw ApiException.badRequest("Ingresa tu contraseña actual");
@@ -208,10 +332,16 @@ public class AuthController {
             userRepository.save(user);
             throw ApiException.unauthorized("Contraseña actual incorrecta");
         }
-        // Éxito → reset si traía estado.
+        // Éxito → reset si traía estado. El save() explícito importa: en
+        // /change-password el guardado posterior de la contraseña lo arrastraba,
+        // pero en /disable-2fa el flujo sigue con la verificación del código
+        // TOTP, que lanza si el código es incorrecto — y el reset se perdía sin
+        // llegar nunca a la BD. La entidad no está en una transacción con dirty
+        // checking, así que sin save() el cambio solo vive en memoria.
         if (user.getFailedPasswordAttempts() != 0 || user.getPasswordLockedUntil() != null) {
             user.setFailedPasswordAttempts(0);
             user.setPasswordLockedUntil(null);
+            userRepository.save(user);
         }
     }
 

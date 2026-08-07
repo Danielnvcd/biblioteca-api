@@ -27,6 +27,31 @@ services:
     # se descontrola. Ajustar si la BD crece mucho (subir y revisar shared_buffers).
     mem_limit: 512m
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Solo lo usa el rate-limit (buckets de Bucket4j). No guarda sesiones ni
+    # datos de negocio, así que no necesita persistencia: si se reinicia, los
+    # contadores arrancan de cero y se vuelven a llenar solos.
+    #
+    # maxmemory-policy allkeys-lru para que, si alguna vez se llena, tire las
+    # claves viejas en vez de empezar a rechazar escrituras — un bucket perdido
+    # es un intento de más, un Redis que rechaza escrituras rompe el limitador.
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory 200mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # Sin puertos publicados: solo lo alcanza la API por la red interna de
+    # compose. Redis sin auth expuesto a internet es un problema conocido.
+    mem_limit: 256m
+
   api:
     build: .
     restart: unless-stopped
@@ -38,6 +63,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DATABASE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-biblioteca_maxipet}
@@ -47,9 +74,12 @@ services:
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in .env (openssl rand -base64 32)}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       RATE_LIMIT_ENABLED: "true"
-      # Sólo se usa en el PRIMER arranque (BD sin usuario admin). Si está vacío
-      # o no está seteado, DataInitializer no crea el admin y loggea un warning.
-      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
+      # Con backend=redis los contadores sobreviven reinicios de la API y se
+      # comparten si algún día corren más de una instancia. Si Redis no
+      # responde, RateLimitFilter deja pasar el request y loguea WARN: el
+      # bloqueo por cuenta (en Postgres) sigue cubriendo la fuerza bruta.
+      RATE_LIMIT_BACKEND: ${RATE_LIMIT_BACKEND:-redis}
+      SPRING_DATA_REDIS_URL: ${SPRING_DATA_REDIS_URL:-redis://redis:6379}
       # Sólo poner =true en el .env si REALMENTE corrés Redis (RATE_LIMIT_BACKEND=redis).
       MANAGEMENT_HEALTH_REDIS_ENABLED: ${MANAGEMENT_HEALTH_REDIS_ENABLED:-false}
     volumes:

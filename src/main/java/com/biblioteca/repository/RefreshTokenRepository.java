@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long> {
@@ -18,6 +19,26 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
            "WHERE r.userId = :userId AND r.revokedAt IS NULL")
     int revokeAllActiveForUser(@Param("userId") Integer userId,
                                @Param("now") LocalDateTime now);
+
+    /**
+     * Sesiones vigentes de un usuario: ni revocadas ni vencidas. Alimenta la
+     * pantalla "sesiones activas" del perfil.
+     */
+    List<RefreshToken> findByUserIdAndRevokedAtIsNullAndExpiresAtAfterOrderByCreatedAtDesc(
+            Integer userId, LocalDateTime now);
+
+    /**
+     * Cierra todas las sesiones activas del usuario MENOS una — la que está
+     * usando quien pide la operación. Sin la excepción, "cerrar las demás
+     * sesiones" desloguearía también a quien apretó el botón, que es
+     * exactamente lo contrario de lo que espera.
+     */
+    @Modifying
+    @Query("UPDATE RefreshToken r SET r.revokedAt = :now " +
+           "WHERE r.userId = :userId AND r.revokedAt IS NULL AND r.id <> :keepId")
+    int revokeAllActiveForUserExcept(@Param("userId") Integer userId,
+                                     @Param("keepId") Long keepId,
+                                     @Param("now") LocalDateTime now);
 
     /**
      * Atomically revokes the token only if it is still active. Returns the

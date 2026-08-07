@@ -2,12 +2,36 @@
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /workspace
 
-# Cache deps separately from sources
 COPY pom.xml .
-RUN mvn -B -q dependency:go-offline
-
 COPY src ./src
-RUN mvn -B -q -DskipTests package
+
+# El cache mount persiste el repo Maven ENTRE builds: un reintento reanuda en
+# vez de volver a bajar los ~300 MB desde cero. No viaja a la imagen final —
+# esto es multi-stage y al runtime solo se copia el jar.
+#
+# Antes acá había un `dependency:go-offline` en su propia capa para cachear las
+# dependencias aparte de las fuentes. Se quitó: resuelve bastante más de lo que
+# el build necesita (todos los plugins, todos los opcionales) y el cache mount
+# cubre el mismo objetivo sin bajar de más.
+#
+# Los timeouts son el motivo real del cambio. Sin ellos, una conexión que muere
+# en silencio contra Maven Central deja el build colgado indefinidamente: sin
+# output, sin error y sin timeout (visto en la práctica — 13 min a 1 KB/s con
+# 1 segundo de CPU acumulado). Van los dos juegos de propiedades a propósito:
+# `maven.wagon.*` aplica al transporte wagon y `aether.connector.*` al
+# transporte HTTP nativo del resolver, que es el que Maven 3.9 usa por defecto.
+# Con uno solo, el que esté activo se queda sin timeout.
+#
+# Tampoco lleva `-q`: en modo quiet Maven no imprime las descargas, que es
+# justamente lo que hacía imposible ver dónde se trababa.
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -DskipTests \
+        -Dmaven.wagon.rto=30000 \
+        -Dmaven.wagon.http.retryHandler.count=3 \
+        -Daether.connector.connectTimeout=15000 \
+        -Daether.connector.requestTimeout=30000 \
+        -Daether.connector.http.retryHandler.count=3 \
+        package
 
 # ---------- Runtime stage ----------
 FROM eclipse-temurin:17-jre-jammy

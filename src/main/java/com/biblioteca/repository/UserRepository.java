@@ -15,7 +15,7 @@ public interface UserRepository extends JpaRepository<User, Integer> {
     Optional<User> findByUsername(String username);
     boolean existsByUsername(String username);
     @Query("SELECT new com.biblioteca.security.UserSecurityState(" +
-           "u.id, u.username, u.role, u.passwordChangedAt) " +
+           "u.id, u.username, u.role, u.passwordChangedAt, u.lastSeen) " +
            "FROM User u WHERE u.id = :id")
     Optional<UserSecurityState> findSecurityStateById(@Param("id") Integer id);
 

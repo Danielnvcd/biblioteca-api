@@ -18,6 +18,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -143,6 +144,39 @@ public class RefreshTokenService {
                 repo.save(rt);
             }
         });
+    }
+
+    /** Sesiones vigentes del usuario, la más reciente primero. */
+    @Transactional(readOnly = true)
+    public List<RefreshToken> activeSessions(Integer userId) {
+        return repo.findByUserIdAndRevokedAtIsNullAndExpiresAtAfterOrderByCreatedAtDesc(
+                userId, LocalDateTime.now());
+    }
+
+    /**
+     * Id de la sesión a la que corresponde un token crudo, o null si no existe.
+     *
+     * Existe para que el controller pueda marcar cuál de las sesiones listadas
+     * es la actual sin conocer el hash: el hasheo es un detalle de este
+     * servicio y el token crudo no se guarda en ningún lado.
+     */
+    @Transactional(readOnly = true)
+    public Long sessionIdOf(String rawToken) {
+        if (rawToken == null || rawToken.isBlank()) return null;
+        return repo.findByTokenHash(hash(rawToken)).map(RefreshToken::getId).orElse(null);
+    }
+
+    /**
+     * Cierra todas las sesiones del usuario menos la indicada. Devuelve cuántas
+     * cerró. Con keepId null cierra todas.
+     */
+    @Transactional
+    public int revokeOthers(Integer userId, Long keepId) {
+        LocalDateTime now = LocalDateTime.now();
+        if (keepId == null) {
+            return repo.revokeAllActiveForUser(userId, now);
+        }
+        return repo.revokeAllActiveForUserExcept(userId, keepId, now);
     }
 
     public record Rotated(String rawToken, Integer userId) {}
