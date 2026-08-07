@@ -58,6 +58,26 @@ public class User {
     @Column(name = "password_locked_until")
     private LocalDateTime passwordLockedUntil;
 
+    /**
+     * Fallos consecutivos al verificar un código TOTP (/verify-2fa, /disable-2fa).
+     * Separado de failedPasswordAttempts a propósito: son dos factores distintos
+     * y un fallo en uno no debe bloquear el flujo del otro.
+     */
+    @Column(name = "failed_totp_attempts", nullable = false)
+    private int failedTotpAttempts = 0;
+
+    /** Si está en el futuro, se rechaza toda verificación de TOTP hasta esa hora. */
+    @Column(name = "totp_locked_until")
+    private LocalDateTime totpLockedUntil;
+
+    /**
+     * Secret emitido por /setup-2fa y aún sin confirmar, cifrado con
+     * EncryptionService. Vive acá y no en el cliente para que el factor que
+     * termina activo sea el que generó el servidor.
+     */
+    @Column(name = "totp_pending_secret", columnDefinition = "TEXT")
+    private String totpPendingSecret;
+
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
     public String getUsername() { return username; }
@@ -88,4 +108,10 @@ public class User {
     public void setFailedPasswordAttempts(int failedPasswordAttempts) { this.failedPasswordAttempts = failedPasswordAttempts; }
     public LocalDateTime getPasswordLockedUntil() { return passwordLockedUntil; }
     public void setPasswordLockedUntil(LocalDateTime passwordLockedUntil) { this.passwordLockedUntil = passwordLockedUntil; }
+    public int getFailedTotpAttempts() { return failedTotpAttempts; }
+    public void setFailedTotpAttempts(int failedTotpAttempts) { this.failedTotpAttempts = failedTotpAttempts; }
+    public LocalDateTime getTotpLockedUntil() { return totpLockedUntil; }
+    public void setTotpLockedUntil(LocalDateTime totpLockedUntil) { this.totpLockedUntil = totpLockedUntil; }
+    public String getTotpPendingSecret() { return totpPendingSecret; }
+    public void setTotpPendingSecret(String totpPendingSecret) { this.totpPendingSecret = totpPendingSecret; }
 }

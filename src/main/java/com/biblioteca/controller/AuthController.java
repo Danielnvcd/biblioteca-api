@@ -172,7 +172,10 @@ public class AuthController {
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
         verifyCurrentPassword(user, body.getCurrentPassword());
-        authService.verifyAndEnable2fa(user, body.getCode(), body.getSecret());
+        // El secret ya no se toma del body: /setup-2fa lo dejó guardado en el
+        // servidor. body.getSecret() se sigue aceptando (el frontend actual lo
+        // manda) pero se ignora.
+        authService.verifyAndEnable2fa(user, body.getCode());
         auditService.log(user.getUsername(), "2FA activado", req.getRemoteAddr());
         return ResponseEntity.ok(Map.of("message", "2FA activado correctamente"));
     }

@@ -10,8 +10,13 @@ public class Confirm2faRequest {
     @Size(max = 200)
     private String currentPassword;
 
-    /** El secret base32 generado por TotpService.newSecret(). */
-    @NotBlank
+    /**
+     * @deprecated El servidor guarda el secret pendiente desde /setup-2fa y
+     * confirma contra ese. Este campo se sigue aceptando para no romper al
+     * frontend que aún lo envía, pero se ignora. Ya no es @NotBlank: un cliente
+     * nuevo puede omitirlo.
+     */
+    @Deprecated
     @Size(max = 64)
     private String secret;
 
