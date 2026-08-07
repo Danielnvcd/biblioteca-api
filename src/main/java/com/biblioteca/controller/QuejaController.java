@@ -72,6 +72,11 @@ public class QuejaController {
         return ResponseEntity.ok(Map.of("message", "Queja registrada"));
     }
 
+    /** Estados válidos de una queja. Fuera de esta lista el frontend no sabe
+     *  qué badge pintar y el filtro por estado deja de encontrar el registro. */
+    private static final java.util.Set<String> ESTADOS_VALIDOS =
+            java.util.Set.of("Nueva", "En Atención", "Cerrada");
+
     @PostMapping("/edit/{id}")
     public ResponseEntity<Map<String, String>> edit(@PathVariable Integer id, @RequestBody QuejaDto dto,
                                                     @AuthenticationPrincipal UserPrincipal principal) {
@@ -79,8 +84,16 @@ public class QuejaController {
 
         Queja queja = quejaRepository.findById(id)
                 .orElseThrow(() -> ApiException.notFound("Queja no encontrada"));
-        queja.setSolucion(dto.getSolucion());
-        if (dto.getEstado() != null) queja.setEstado(dto.getEstado());
+        // Null-guard como el resto de los campos: antes se asignaba siempre, así
+        // que una actualización parcial (solo estado) borraba la solución ya
+        // escrita. Para vaciarla a propósito se manda "" explícito.
+        if (dto.getSolucion() != null) queja.setSolucion(dto.getSolucion());
+        if (dto.getEstado() != null) {
+            if (!ESTADOS_VALIDOS.contains(dto.getEstado())) {
+                throw ApiException.badRequest("Estado inválido: " + dto.getEstado());
+            }
+            queja.setEstado(dto.getEstado());
+        }
         quejaRepository.save(queja);
         return ResponseEntity.ok(Map.of("message", "Queja actualizada"));
     }

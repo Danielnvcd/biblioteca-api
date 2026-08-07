@@ -102,9 +102,14 @@ public class FileController {
             // así que el content-type debe salir del archivo realmente servido.
             String servedName = filePath.getFileName().toString();
             String contentType = determineContentType(servedName);
+            // El nombre del header debe describir el archivo REALMENTE servido.
+            // Con ?thumb=true el thumb es siempre JPG aunque el original sea
+            // .png/.gif, así que usar el nombre original dejaba un
+            // Content-Type: image/jpeg junto a un filename="foo.png" — el
+            // browser guardaba un JPG con extensión equivocada.
             // Filename llega como @PathVariable y se mete al header — saneamos
             // comillas y CR/LF para que un nombre raro no rompa la cabecera.
-            String safeFilename = filename.replaceAll("[\"\\r\\n]", "_");
+            String safeFilename = servedName.replaceAll("[\"\\r\\n]", "_");
             // Para documentos (PDF/Office) forzamos descarga: si un atacante
             // logra subirlos como admin comprometido, no se renderizan en
             // contexto del dominio de la API. Para imágenes/audio/video

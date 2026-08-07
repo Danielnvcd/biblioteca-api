@@ -332,10 +332,16 @@ public class AuthController {
             userRepository.save(user);
             throw ApiException.unauthorized("Contraseña actual incorrecta");
         }
-        // Éxito → reset si traía estado.
+        // Éxito → reset si traía estado. El save() explícito importa: en
+        // /change-password el guardado posterior de la contraseña lo arrastraba,
+        // pero en /disable-2fa el flujo sigue con la verificación del código
+        // TOTP, que lanza si el código es incorrecto — y el reset se perdía sin
+        // llegar nunca a la BD. La entidad no está en una transacción con dirty
+        // checking, así que sin save() el cambio solo vive en memoria.
         if (user.getFailedPasswordAttempts() != 0 || user.getPasswordLockedUntil() != null) {
             user.setFailedPasswordAttempts(0);
             user.setPasswordLockedUntil(null);
+            userRepository.save(user);
         }
     }
 
