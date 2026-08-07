@@ -8,6 +8,8 @@ import com.biblioteca.security.EncryptionService;
 import com.biblioteca.security.JwtTokenProvider;
 import com.biblioteca.security.RefreshTokenService;
 import com.biblioteca.security.TotpService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +18,8 @@ import java.util.Optional;
 
 @Service
 public class AuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -62,6 +66,24 @@ public class AuthService {
      */
     private static final int MAX_LOGIN_ATTEMPTS = 10;
     private static final java.time.Duration LOGIN_LOCKOUT = java.time.Duration.ofMinutes(15);
+
+    /**
+     * Bloqueo por cuenta para la verificación del código TOTP.
+     *
+     * El rate-limit de RateLimitFilter es por IP, y por IP no hay techo real:
+     * una botnet lo evade por definición, y una sola máquina también si logra
+     * influir en la IP que ve la aplicación. Sin un contador ligado a la cuenta,
+     * el espacio de 10^6 códigos (×3 simultáneos por WINDOW=1) quedaba abierto
+     * para quien ya tuviera la contraseña — es decir, el segundo factor no
+     * agregaba nada frente al escenario para el que existe.
+     *
+     * Umbral 5 y no 10 como el login: acá no hay margen para el error honesto
+     * repetido (el código se copia de una app, no se recuerda de memoria), y un
+     * segundo factor forzable no sirve de nada. Los 15 minutos se vencen solos,
+     * así que un tercero no puede dejar la cuenta bloqueada de forma permanente.
+     */
+    private static final int MAX_TOTP_ATTEMPTS = 5;
+    private static final java.time.Duration TOTP_LOCKOUT = java.time.Duration.ofMinutes(15);
 
     /**
      * Hash BCrypt de una contraseña aleatoria, generado una vez al arranque.
@@ -134,18 +156,60 @@ public class AuthService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> ApiException.unauthorized("Sesión 2FA inválida"));
 
+        // Se comprueba ANTES de mirar el secret: mientras dura el bloqueo no se
+        // verifica ningún código, así que el endpoint tampoco sirve de oráculo.
+        enforceTotpLockout(user);
+
         if (user.getTotpSecret() == null || user.getTotpSecret().isEmpty()) {
             throw ApiException.badRequest("2FA no está configurado para este usuario");
         }
 
         if (!totpService.verify(encryptionService.decrypt(user.getTotpSecret()), request.getCode())) {
+            registerTotpFailure(user);
             throw ApiException.unauthorized("Código incorrecto");
         }
+        clearTotpFailures(user);
 
         // "Remember" was decided at step 1 and is carried in the step token,
         // so it can't be flipped between login and 2FA.
         boolean remember = tokenProvider.getRememberFromToken(stepToken);
         return issueSession(user, remember, ip, userAgent);
+    }
+
+    /** Rechaza la operación si la cuenta está bloqueada por fallos de TOTP. */
+    private void enforceTotpLockout(User user) {
+        LocalDateTime lockedUntil = user.getTotpLockedUntil();
+        if (lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now())) {
+            throw ApiException.forbidden(
+                    "Demasiados códigos incorrectos. Intenta de nuevo en unos minutos.");
+        }
+    }
+
+    /**
+     * Suma un fallo de TOTP y bloquea al llegar al umbral. El save() es
+     * explícito porque la entidad no viaja en una transacción con dirty
+     * checking — sin él el contador solo viviría en memoria y el bloqueo
+     * no llegaría nunca a existir.
+     */
+    private void registerTotpFailure(User user) {
+        int attempts = user.getFailedTotpAttempts() + 1;
+        user.setFailedTotpAttempts(attempts);
+        if (attempts >= MAX_TOTP_ATTEMPTS) {
+            user.setTotpLockedUntil(LocalDateTime.now().plus(TOTP_LOCKOUT));
+            // El 2FA es la última línea de defensa de la cuenta: que se agote
+            // merece quedar en el log aunque el bloqueo se venza solo.
+            log.warn("TOTP lockout activado para userId={} tras {} fallos", user.getId(), attempts);
+        }
+        userRepository.save(user);
+    }
+
+    /** Limpia el estado de fallos tras un código correcto. */
+    private void clearTotpFailures(User user) {
+        if (user.getFailedTotpAttempts() != 0 || user.getTotpLockedUntil() != null) {
+            user.setFailedTotpAttempts(0);
+            user.setTotpLockedUntil(null);
+            userRepository.save(user);
+        }
     }
 
     /**
@@ -178,23 +242,50 @@ public class AuthService {
         refreshTokenService.revoke(currentRefresh);
     }
 
+    /**
+     * Genera un secret nuevo y lo deja guardado (cifrado) como pendiente de
+     * confirmación. Se persiste en el servidor en vez de confiar en que el
+     * cliente lo devuelva en /confirm-2fa: si el secret llega desde afuera,
+     * el factor que termina protegiendo la cuenta lo elige quien llama.
+     *
+     * Sobrescribir un pendiente anterior es intencional — pedir /setup-2fa de
+     * nuevo significa "descarta el QR anterior, dame otro".
+     */
     public String setup2fa(User user) {
-        return totpService.newSecret();
+        String secret = totpService.newSecret();
+        user.setTotpPendingSecret(encryptionService.encrypt(secret));
+        userRepository.save(user);
+        return secret;
     }
 
     public String otpAuthUri(String username, String secret) {
         return totpService.otpAuthUri("Maxipet", username, secret);
     }
 
-    public void verifyAndEnable2fa(User user, String code, String secret) {
-        if (secret == null || secret.isBlank()) {
-            throw ApiException.badRequest("Falta el secret");
+    /**
+     * Confirma el secret que /setup-2fa dejó pendiente y lo activa.
+     *
+     * El código se valida contra el secret guardado en el servidor, no contra
+     * uno recibido del cliente. Comparte el lockout de {@link #verify2fa}: sin
+     * él, este endpoint quedaba como una vía alternativa para probar códigos.
+     */
+    public void verifyAndEnable2fa(User user, String code) {
+        String pending = user.getTotpPendingSecret();
+        if (pending == null || pending.isBlank()) {
+            throw ApiException.badRequest(
+                    "No hay una configuración de 2FA pendiente. Vuelve a generar el código QR.");
         }
-        if (!totpService.verify(secret, code)) {
+        enforceTotpLockout(user);
+        if (!totpService.verify(encryptionService.decrypt(pending), code)) {
+            registerTotpFailure(user);
             throw ApiException.badRequest("Código incorrecto, intenta de nuevo");
         }
-        // Encrypt at rest — DB leak shouldn't grant attackers valid TOTP codes.
-        user.setTotpSecret(encryptionService.encrypt(secret));
+        // Ya viene cifrado desde setup2fa — se promueve tal cual, sin volver a
+        // cifrar (doble cifrado dejaría el secret indescifrable).
+        user.setTotpSecret(pending);
+        user.setTotpPendingSecret(null);
+        user.setFailedTotpAttempts(0);
+        user.setTotpLockedUntil(null);
         userRepository.save(user);
     }
 
@@ -214,10 +305,18 @@ public class AuthService {
         if (user.getTotpSecret() == null || user.getTotpSecret().isEmpty()) {
             throw ApiException.badRequest("La verificación en dos pasos no está activa");
         }
+        // Mismo lockout que verify2fa: acá el bucket de 5/min por IP era el
+        // único techo del código, y un techo por IP no cubre a un atacante
+        // que puede presentarse desde varias.
+        enforceTotpLockout(user);
         if (!totpService.verify(encryptionService.decrypt(user.getTotpSecret()), code)) {
+            registerTotpFailure(user);
             throw ApiException.badRequest("Código incorrecto, intenta de nuevo");
         }
         user.setTotpSecret(null);
+        user.setTotpPendingSecret(null);
+        user.setFailedTotpAttempts(0);
+        user.setTotpLockedUntil(null);
         userRepository.save(user);
     }
 
@@ -228,6 +327,12 @@ public class AuthService {
      */
     public void clear2fa(User user) {
         user.setTotpSecret(null);
+        user.setTotpPendingSecret(null);
+        // También se limpia el bloqueo: si el reseteo existe para destrabar a
+        // quien perdió el dispositivo, dejarlo bloqueado lo mandaría a esperar
+        // 15 minutos para configurar el factor nuevo.
+        user.setFailedTotpAttempts(0);
+        user.setTotpLockedUntil(null);
         userRepository.save(user);
     }
 

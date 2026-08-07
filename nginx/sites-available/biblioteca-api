@@ -91,7 +91,27 @@ server {
 
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
-        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+
+        # ⚠️ $remote_addr y NO $proxy_add_x_forwarded_for.
+        #
+        # $proxy_add_x_forwarded_for se expande a "$http_x_forwarded_for,
+        # $remote_addr": CONSERVA lo que mandó el cliente y le anexa la IP real
+        # al final. Spring (forward-headers-strategy=framework) resuelve la
+        # dirección remota tomando el PRIMER token de la lista — o sea, el que
+        # eligió el cliente. Resultado: cualquiera podía fijar la IP que ve la
+        # aplicación mandando su propio X-Forwarded-For, y con eso:
+        #   - evadir el rate-limit por IP de RateLimitFilter rotando el valor,
+        #   - ensuciar la bitácora (AuditService guarda getRemoteAddr()),
+        #   - falsear la IP que /api/auth/sessions le muestra al usuario para
+        #     que detecte accesos que no reconoce.
+        #
+        # Con $remote_addr el header se REEMPLAZA y el valor entrante se
+        # descarta. $remote_addr ya es la IP real del cliente gracias al
+        # real_ip_header CF-Connecting-IP de nginx.conf, así que no se pierde
+        # nada. El módulo real_ip NO sanea X-Forwarded-For, por eso hay que
+        # hacerlo explícitamente acá.
+        proxy_set_header   X-Forwarded-For   $remote_addr;
+
         proxy_set_header   X-Forwarded-Proto https;
         proxy_set_header   X-Forwarded-Host  $host;
     }

@@ -80,9 +80,14 @@ class AuthServiceDisable2faTest {
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Código incorrecto");
 
-        // Lo importante: el secreto sigue en su lugar y no se persistió nada.
+        // Lo importante: el secreto sigue en su lugar.
         assertThat(u.getTotpSecret()).isEqualTo(CIFRADO);
-        verify(userRepository, never()).save(any());
+        // Sí se persiste, pero solo el contador de fallos: el fallo tiene que
+        // dejar rastro para que el lockout por cuenta pueda contarlo. Antes acá
+        // se afirmaba que no se guardaba nada, y por eso los intentos de código
+        // eran ilimitados. Ver AuthServiceTotpLockoutTest.
+        assertThat(u.getFailedTotpAttempts()).isEqualTo(1);
+        verify(userRepository).save(u);
     }
 
     @Test
