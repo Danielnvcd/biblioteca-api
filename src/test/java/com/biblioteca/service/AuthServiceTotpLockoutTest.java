@@ -64,7 +64,8 @@ class AuthServiceTotpLockoutTest {
         when(passwordEncoder.encode(any())).thenReturn("$2a$12$dummydummydummydummydum");
 
         authService = new AuthService(userRepository, passwordEncoder, tokenProvider,
-                totpService, refreshTokenService, encryptionService);
+                totpService, refreshTokenService, encryptionService,
+                mock(com.biblioteca.security.AccessTokenDenylistService.class));
     }
 
     private User conTotp() {

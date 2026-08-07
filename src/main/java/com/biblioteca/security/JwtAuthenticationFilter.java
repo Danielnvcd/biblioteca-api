@@ -20,10 +20,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider tokenProvider;
     private final SessionInvalidationService sessions;
+    private final AccessTokenDenylistService denylist;
 
-    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider, SessionInvalidationService sessions) {
+    public JwtAuthenticationFilter(JwtTokenProvider tokenProvider,
+                                   SessionInvalidationService sessions,
+                                   AccessTokenDenylistService denylist) {
         this.tokenProvider = tokenProvider;
         this.sessions = sessions;
+        this.denylist = denylist;
     }
 
     @Override
@@ -35,6 +39,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // Reject 2FA step tokens — those only authorize /verify-2fa, never general access.
                 String scope = tokenProvider.getScopeFromToken(token);
                 if ("access".equals(scope)) {
+                    // Revocado por /logout: se deja pasar sin autenticar, así
+                    // el request termina en 401 igual que con un token vencido.
+                    if (denylist.isRevoked(tokenProvider.getJtiFromToken(token))) {
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
+
                     Integer userId = tokenProvider.getUserIdFromToken(token);
                     Optional<UserSecurityState> stateOpt = sessions.findSecurityState(userId);
                     if (stateOpt.isEmpty()) {

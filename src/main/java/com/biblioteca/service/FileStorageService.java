@@ -186,6 +186,11 @@ public class FileStorageService {
                 return thumbPath;
             }
             try {
+                if (exceedsPixelBudget(originalPath)) {
+                    // No se genera thumb: se sirve el original. Peor experiencia
+                    // para ese archivo puntual, pero no se tumba el proceso.
+                    return originalPath;
+                }
                 BufferedImage original = ImageIO.read(originalPath.toFile());
                 if (original == null) return originalPath;
 
@@ -204,6 +209,50 @@ public class FileStorageService {
             } catch (Exception e) {
                 return originalPath;
             }
+        }
+    }
+
+    /**
+     * Tope de píxeles que aceptamos decodificar para generar un thumbnail.
+     *
+     * 50 MP cubre cualquier cámara o escáner realista (una foto de 50 MP ya es
+     * de gama alta) y acota la memoria: ImageIO decodifica a un BufferedImage
+     * sin comprimir, ~4 bytes por píxel, así que 50 MP son ~200 MB de heap.
+     * Con el contenedor limitado a 1 GB y MaxRAMPercentage=75, dos peticiones
+     * concurrentes sobre una imagen más grande bastan para tumbar la JVM.
+     *
+     * El riesgo real es la "decompression bomb": un PNG de pocos KB puede
+     * declarar decenas de miles de píxeles por lado. El tamaño en disco no
+     * dice nada, así que el límite de 50 MB de subida no cubre este caso —
+     * hay que mirar las dimensiones declaradas en la cabecera.
+     */
+    private static final long MAX_THUMB_PIXELS = 50_000_000L;
+
+    /**
+     * Lee SOLO la cabecera de la imagen para conocer sus dimensiones, sin
+     * decodificar los píxeles. Es la diferencia entre enterarse del tamaño y
+     * sufrirlo: ImageIO.read() reservaría el buffer completo antes de que
+     * pudiéramos comprobar nada.
+     *
+     * Ante la duda (formato ilegible, error de E/S) devuelve true — preferimos
+     * no generar el thumb antes que arriesgar la decodificación.
+     */
+    private static boolean exceedsPixelBudget(Path imagePath) {
+        try (javax.imageio.stream.ImageInputStream in =
+                     ImageIO.createImageInputStream(imagePath.toFile())) {
+            if (in == null) return true;
+            java.util.Iterator<javax.imageio.ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) return true;
+            javax.imageio.ImageReader reader = readers.next();
+            try {
+                reader.setInput(in);
+                long pixels = (long) reader.getWidth(0) * (long) reader.getHeight(0);
+                return pixels > MAX_THUMB_PIXELS;
+            } finally {
+                reader.dispose();
+            }
+        } catch (Exception e) {
+            return true;
         }
     }
 
