@@ -92,7 +92,7 @@ public class EmailCodeService {
      * Un único mensaje para todos los modos de fallo de la verificación. Ver
      * el comentario de clase: separarlos filtra estado.
      */
-    private static final String GENERIC_FAILURE = "Código incorrecto o vencido. Pedí uno nuevo.";
+    private static final String GENERIC_FAILURE = "Código incorrecto o vencido. Pide uno nuevo.";
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -138,7 +138,7 @@ public class EmailCodeService {
     public Issued issueAndSend(User user, EmailCode.Purpose purpose, String destination, String ip) {
         if (!mailService.isEnabled()) {
             throw ApiException.unavailable(
-                    "El envío de correo no está configurado. Avisá a un administrador.");
+                    "El envío de correo no está configurado. Avisa a un administrador.");
         }
         if (!EmailAddresses.isValid(destination)) {
             throw ApiException.badRequest("La dirección de correo no es válida");
@@ -172,7 +172,7 @@ public class EmailCodeService {
         if (!mailService.send(destination, mail)) {
             codeRepository.invalidateLive(user.getId(), purpose.value(), now);
             throw ApiException.unavailable(
-                    "No pudimos enviar el correo. Intentá de nuevo en un momento.");
+                    "No pudimos enviar el correo. Intenta de nuevo en un momento.");
         }
 
         return new Issued(entity.getExpiresAt(), EmailAddresses.mask(destination));
@@ -193,19 +193,19 @@ public class EmailCodeService {
             if (secondsSince < RESEND_COOLDOWN.getSeconds()) {
                 long wait = RESEND_COOLDOWN.getSeconds() - secondsSince;
                 throw ApiException.tooManyRequests(
-                        "Esperá " + wait + " segundos antes de pedir otro código.");
+                        "Espera " + wait + " segundos antes de pedir otro código.");
             }
         }
 
         if (codeRepository.countIssuedSince(user.getId(), purpose.value(),
                 now.minusMinutes(15)) >= MAX_PER_15_MIN) {
             throw ApiException.tooManyRequests(
-                    "Pediste demasiados códigos. Esperá unos minutos antes de intentar de nuevo.");
+                    "Pediste demasiados códigos. Espera unos minutos antes de intentar de nuevo.");
         }
         if (codeRepository.countIssuedSince(user.getId(), purpose.value(),
                 now.minusHours(1)) >= MAX_PER_HOUR) {
             throw ApiException.tooManyRequests(
-                    "Pediste demasiados códigos en la última hora. Intentá más tarde.");
+                    "Pediste demasiados códigos en la última hora. Intenta más tarde.");
         }
     }
 
@@ -266,7 +266,7 @@ public class EmailCodeService {
                 actual.getBytes(StandardCharsets.UTF_8));
 
         if (!ok) {
-            // Si ese era el último cupo, el código queda quemado acá mismo y el
+            // Si ese era el último cupo, el código queda quemado aquí mismo y el
             // siguiente intento ni siquiera lo encuentra vivo.
             codeRepository.burnIfExhausted(live.getId(), MAX_ATTEMPTS_PER_CODE, now);
             registerFailure(user, purpose);
@@ -274,7 +274,7 @@ public class EmailCodeService {
         }
 
         // Consumo atómico: si dos requests llegan a la vez con el mismo código
-        // válido, solo uno recibe 1 acá y el otro lo trata como inválido.
+        // válido, solo uno recibe 1 aquí y el otro lo trata como inválido.
         if (codeRepository.consume(live.getId(), now) == 0) {
             registerFailure(user, purpose);
             throw ApiException.unauthorized(GENERIC_FAILURE);
@@ -313,7 +313,7 @@ public class EmailCodeService {
         LocalDateTime until = user.getEmailCodeLockedUntil();
         if (until != null && until.isAfter(LocalDateTime.now())) {
             throw ApiException.forbidden(
-                    "Demasiados códigos incorrectos. Intentá de nuevo en unos minutos.");
+                    "Demasiados códigos incorrectos. Intenta de nuevo en unos minutos.");
         }
     }
 

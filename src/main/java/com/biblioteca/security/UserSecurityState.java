@@ -10,7 +10,7 @@ public record UserSecurityState(
         String username,
         String role,
         LocalDateTime passwordChangedAt,
-        /** Última actividad registrada. Viaja acá para que el filtro pueda
+        /** Última actividad registrada. Viaja aquí para que el filtro pueda
          *  decidir si toca refrescarla sin hacer una consulta extra. */
         LocalDateTime lastSeen) {
 }

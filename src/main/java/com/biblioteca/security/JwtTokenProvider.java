@@ -19,7 +19,7 @@ public class JwtTokenProvider {
      *
      * Se emiten y validan igual porque el día que esta clave se comparta con un
      * segundo servicio (un job, otra API del mismo dominio), un token emitido
-     * para aquél dejaría de ser aceptable acá — sin `aud` sí lo sería, y ese es
+     * para aquél dejaría de ser aceptable aquí — sin `aud` sí lo sería, y ese es
      * un fallo silencioso y difícil de ver venir.
      */
     public static final String ISSUER   = "biblioteca-api";

@@ -35,7 +35,7 @@ spring:
     # DB_MIGRATION_* el comportamiento es idéntico al de siempre. Para
     # recortar el privilegio de la app, ver docs/DB-LEAST-PRIVILEGE.md.
     #
-    # Solo va en el perfil prod: acá DB_USERNAME/DB_PASSWORD siempre vienen del
+    # Solo va en el perfil prod: aquí DB_USERNAME/DB_PASSWORD siempre vienen del
     # entorno. En los tests, definir estas propiedades pisaría las credenciales
     # que genera Testcontainers (ver el comentario en application.yml).
     user: ${DB_MIGRATION_USERNAME:${DB_USERNAME}}

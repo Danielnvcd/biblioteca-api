@@ -42,7 +42,7 @@ public interface EmailCodeRepository extends JpaRepository<EmailCode, Long> {
      * propósito. Con "leer attempts → decidir → incrementar", N requests
      * concurrentes leen todas el mismo valor, todas se creen por debajo del
      * tope y todas llegan a probar su código: el límite de 5 intentos deja de
-     * existir justo contra el atacante que sabe paralelizar. Acá la base
+     * existir justo contra el atacante que sabe paralelizar. Aquí la base
      * arbitra, y como mucho se conceden MAX reservas en total.
      *
      * Se reserva ANTES de comparar el hash, así que un intento cuenta aunque

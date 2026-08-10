@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
  * Código de un solo uso enviado por correo, para iniciar sesión (segundo
  * factor) o para probar que una dirección recién dada de alta es del usuario.
  *
- * El código NO se guarda: lo que vive acá es su HMAC-SHA256 con una clave de
+ * El código NO se guarda: lo que vive aquí es su HMAC-SHA256 con una clave de
  * aplicación. Un código vivo equivale al segundo factor durante su ventana,
  * así que guardarlo legible convertiría cualquier lectura de la base en un
  * bypass del 2FA. Ver V9 para el razonamiento completo.

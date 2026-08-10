@@ -66,7 +66,7 @@ public class FileStorageService {
      *
      * Las demás categorías públicas (boletin, seguridad) SÍ alojan documentos
      * y audio de forma legítima (ver SeguridadController: podcasts .mp3,
-     * manuales .pdf), así que no se restringen acá.
+     * manuales .pdf), así que no se restringen aquí.
      *
      * Solo afecta subidas nuevas: los archivos ya almacenados se siguen
      * sirviendo con normalidad.
@@ -147,7 +147,7 @@ public class FileStorageService {
      * limpia el {@code .tmp} por si alguna generación quedó a medias.
      *
      * Sigue sin lanzar: borrar un archivo es la última parte de operaciones que
-     * ya modificaron la base, y fallar acá no debe deshacer lo anterior. Pero
+     * ya modificaron la base, y fallar aquí no debe deshacer lo anterior. Pero
      * ahora deja constancia — un disco que no se puede limpiar es algo que
      * alguien debería terminar mirando.
      */

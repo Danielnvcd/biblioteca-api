@@ -29,7 +29,7 @@ import java.util.Optional;
  *    sin leerlo, que es exactamente cómo un aviso real pasa desapercibido.
  *
  *  - Un aviso que no llega no sirve, pero un aviso que ROMPE el login sirve
- *    todavía menos. Todo lo de acá está envuelto para que un fallo (correo
+ *    todavía menos. Todo lo de aquí está envuelto para que un fallo (correo
  *    caído, base con problemas) se registre y siga de largo: el usuario ya
  *    demostró quién es y tiene que poder entrar.
  */

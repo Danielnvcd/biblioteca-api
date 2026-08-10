@@ -72,7 +72,7 @@ public class User {
 
     /**
      * Secret emitido por /setup-2fa y aún sin confirmar, cifrado con
-     * EncryptionService. Vive acá y no en el cliente para que el factor que
+     * EncryptionService. Vive aquí y no en el cliente para que el factor que
      * termina activo sea el que generó el servidor.
      */
     @Column(name = "totp_pending_secret", columnDefinition = "TEXT")
@@ -81,7 +81,7 @@ public class User {
     /**
      * Correo verificado de la cuenta. Solo se llena desde {@link #pendingEmail}
      * cuando un código enviado a esa dirección volvió correcto: mientras esté
-     * acá, alguien probó que puede leer ese buzón.
+     * aquí, alguien probó que puede leer ese buzón.
      */
     @Column(length = 254)
     private String email;
