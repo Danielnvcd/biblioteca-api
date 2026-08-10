@@ -44,7 +44,7 @@ public class FileController {
      * de agregar una, revisá que el contenido sea genuinamente difundible y
      * que exista una razón técnica que impida la descarga autenticada.
      *
-     * ⚠️ Espejado en `PUBLIC_CATEGORIES` de filePresenter.jsx en
+     * OJO: espejado en `PUBLIC_CATEGORIES` de filePresenter.jsx en
      * biblioteca-frontend. Si cambia acá, tiene que cambiar allá EN EL MISMO
      * despliegue.
      */
