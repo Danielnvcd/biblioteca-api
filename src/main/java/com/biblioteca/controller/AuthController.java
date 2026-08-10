@@ -109,7 +109,7 @@ public class AuthController {
     /**
      * Envía (o reenvía) el código de acceso durante un login pendiente de 2FA.
      *
-     * permitAll con validación por step token: acá todavía no hay sesión. El
+     * permitAll con validación por step token: aquí todavía no hay sesión. El
      * destinatario del correo lo determina el token, nunca el cuerpo del
      * request — ver {@link RequestEmailCodeRequest}.
      */
@@ -160,7 +160,7 @@ public class AuthController {
             @CookieValue(value = RefreshCookieFactory.COOKIE_NAME, required = false) String currentRefresh,
             HttpServletRequest req) {
         originValidator.requireTrustedOrigin(req);
-        // El access token viaja en el header, no en la cookie: se lee acá para
+        // El access token viaja en el header, no en la cookie: se lee aquí para
         // que el logout pueda invalidarlo además de matar el refresh token.
         authService.logout(currentRefresh, bearerToken(req));
         ResponseCookie deletion = refreshCookieFactory.buildDeletion();
@@ -366,7 +366,7 @@ public class AuthController {
      *
      * Va como POST y no como DELETE aunque la semántica REST pida lo segundo.
      * Dos razones prácticas: un DELETE con cuerpo es terreno donde proxies,
-     * CDNs y clientes se comportan distinto — y acá el cuerpo lleva la
+     * CDNs y clientes se comportan distinto — y aquí el cuerpo lleva la
      * contraseña, así que perderlo convierte la operación en un 400 confuso —,
      * y el limitador de peticiones cubre esta ruta sin excepciones especiales.
      */

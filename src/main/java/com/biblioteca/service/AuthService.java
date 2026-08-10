@@ -111,7 +111,7 @@ public class AuthService {
      * para quien ya tuviera la contraseña — es decir, el segundo factor no
      * agregaba nada frente al escenario para el que existe.
      *
-     * Umbral 5 y no 10 como el login: acá no hay margen para el error honesto
+     * Umbral 5 y no 10 como el login: aquí no hay margen para el error honesto
      * repetido (el código se copia de una app, no se recuerda de memoria), y un
      * segundo factor forzable no sirve de nada. Los 15 minutos se vencen solos,
      * así que un tercero no puede dejar la cuenta bloqueada de forma permanente.
@@ -171,7 +171,7 @@ public class AuthService {
             body.setMethods(methods);
             body.setMaskedEmail(emailEnabled ? EmailAddresses.mask(user.getEmail()) : null);
 
-            // Si el correo es el ÚNICO segundo factor, el código se manda acá
+            // Si el correo es el ÚNICO segundo factor, el código se manda aquí
             // mismo: obligar al usuario a pulsar "enviame el código" cuando no
             // hay nada más que elegir es un paso sin sentido.
             //
@@ -185,7 +185,7 @@ public class AuthService {
                     body.setCodeSent(true);
                 } catch (Exception e) {
                     // Se atrapa Exception y no solo ApiException: además del
-                    // cooldown o del proveedor caído, acá adentro hay escrituras
+                    // cooldown o del proveedor caído, aquí adentro hay escrituras
                     // a la base, y un problema de base convertiría en 500 un
                     // login cuya contraseña ya se validó. El paso 1 tiene que
                     // sobrevivir a que el envío falle por el motivo que sea —
@@ -211,7 +211,7 @@ public class AuthService {
 
     /**
      * El factor por correo cuenta solo si está activado, el correo está
-     * verificado Y el rol lo admite. Lo último se comprueba también acá, en el
+     * verificado Y el rol lo admite. Lo último se comprueba también aquí, en el
      * camino del login, y no solo al activarlo: si una cuenta es promovida a
      * super_admin después de haberlo encendido, el factor tiene que dejar de
      * valer en ese mismo momento, sin depender de que alguien se acuerde de
@@ -375,11 +375,11 @@ public class AuthService {
 
         // El aviso se dispara ACÁ y no en el controller porque éste es el único
         // punto por el que sale una sesión nueva: login directo, verify-2fa y
-        // verify-email-code pasan los tres por acá. Colgarlo de cada endpoint
+        // verify-email-code pasan los tres por aquí. Colgarlo de cada endpoint
         // significaría que el próximo camino de autenticación que se agregue
         // nazca sin aviso y nadie lo note.
         //
-        // refresh() NO pasa por acá a propósito: renovar no es iniciar sesión, y
+        // refresh() NO pasa por aquí a propósito: renovar no es iniciar sesión, y
         // avisar cada 15 minutos volvería inútil el aviso.
         LoginAlertService.DeviceCheck device = loginAlertService.registerDevice(
                 user.getId(), ctx.deviceCookie(), ctx.userAgent(), ctx.ip());
@@ -479,7 +479,7 @@ public class AuthService {
         if (user.getTotpSecret() == null || user.getTotpSecret().isEmpty()) {
             throw ApiException.badRequest("La verificación en dos pasos no está activa");
         }
-        // Mismo lockout que verify2fa: acá el bucket de 5/min por IP era el
+        // Mismo lockout que verify2fa: aquí el bucket de 5/min por IP era el
         // único techo del código, y un techo por IP no cubre a un atacante
         // que puede presentarse desde varias.
         enforceTotpLockout(user);
@@ -537,7 +537,7 @@ public class AuthService {
     public EmailCodeService.Issued startEmailChange(User user, String rawEmail, String ip) {
         String email = EmailAddresses.normalize(rawEmail);
         if (!EmailAddresses.isValid(email)) {
-            throw ApiException.badRequest("Ingresá un correo válido");
+            throw ApiException.badRequest("Ingresa un correo válido");
         }
         if (email.equals(user.getEmail()) && user.isEmailVerified()) {
             throw ApiException.badRequest("Ese ya es el correo de tu cuenta");
@@ -561,7 +561,7 @@ public class AuthService {
     public void confirmEmailChange(User user, String code) {
         if (user.getPendingEmail() == null || user.getPendingEmail().isBlank()) {
             throw ApiException.badRequest(
-                    "No hay ningún correo pendiente de confirmar. Volvé a empezar.");
+                    "No hay ningún correo pendiente de confirmar. Vuelve a empezar.");
         }
         String verified = emailCodeService.verifyAndConsume(user, EmailCode.Purpose.VERIFY_EMAIL, code);
 
@@ -633,13 +633,13 @@ public class AuthService {
         if (body.getEmail2faEnabled() != null) {
             if (body.getEmail2faEnabled() && !user.hasUsableEmail()) {
                 throw ApiException.badRequest(
-                        "Primero confirmá tu correo para poder recibir códigos");
+                        "Primero confirma tu correo para poder recibir códigos");
             }
             if (body.getEmail2faEnabled()
                     && !Permissions.canUseEmailAsSecondFactor(user.getRole(), user.getUsername())) {
                 throw ApiException.forbidden(
                         "Las cuentas de administración no pueden usar el código por correo como "
-                      + "segundo factor: usá la app autenticadora. El correo sigue sirviendo "
+                      + "segundo factor: usa la app autenticadora. El correo sigue sirviendo "
                       + "para los avisos de inicio de sesión.");
             }
             user.setEmail2faEnabled(body.getEmail2faEnabled());
@@ -664,7 +664,7 @@ public class AuthService {
     private void requireEmailAvailable(String email, Integer selfId) {
         userRepository.findByEmail(email).ifPresent(other -> {
             if (!other.getId().equals(selfId)) {
-                throw ApiException.badRequest("No se puede usar ese correo. Probá con otro.");
+                throw ApiException.badRequest("No se puede usar ese correo. Prueba con otro.");
             }
         });
     }
@@ -679,7 +679,7 @@ public class AuthService {
         try {
             userRepository.saveAndFlush(user);
         } catch (org.springframework.dao.DataIntegrityViolationException e) {
-            throw ApiException.badRequest("No se puede usar ese correo. Probá con otro.");
+            throw ApiException.badRequest("No se puede usar ese correo. Prueba con otro.");
         }
     }
 

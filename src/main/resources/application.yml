@@ -28,11 +28,11 @@ spring:
             non_contextual_creation: true
   flyway:
     enabled: true
-    # OJO: `user`/`password` de Flyway NO se definen acá a propósito.
+    # OJO: `user`/`password` de Flyway NO se definen aquí a propósito.
     #
     # Spring solo mira si la propiedad es != null, no si tiene contenido: en
     # cuanto existe, deriva un datasource propio para Flyway con ESE usuario y
-    # descarta el del datasource principal. Un valor por defecto acá (aunque
+    # descarta el del datasource principal. Un valor por defecto aquí (aunque
     # fuera un fallback "inofensivo") pisa las credenciales de cualquier
     # entorno que las provea por otra vía — los tests de integración con
     # Testcontainers, que generan usuario y contraseña aleatorios, dejan de
@@ -129,7 +129,7 @@ management:
     # intenta conectar a localhost:6379 aunque no estés usando Redis, dejando
     # el /actuator/health en DOWN y el container "unhealthy" para siempre.
     # Lo deshabilitamos por default; cuando uses RATE_LIMIT_BACKEND=redis,
-    # poné MANAGEMENT_HEALTH_REDIS_ENABLED=true en el .env.
+    # pon MANAGEMENT_HEALTH_REDIS_ENABLED=true en el .env.
     redis:
       enabled: ${MANAGEMENT_HEALTH_REDIS_ENABLED:false}
   metrics:

@@ -19,7 +19,7 @@ public final class EmailAddresses {
      * Validación deliberadamente conservadora. No intenta cubrir el RFC 5322
      * completo (que admite comillas, comentarios y direcciones que ningún
      * proveedor real acepta): admite lo que la gente escribe y rechaza todo lo
-     * demás. Un falso negativo acá es un usuario que reescribe su correo; un
+     * demás. Un falso negativo aquí es un usuario que reescribe su correo; un
      * falso positivo es una dirección que no recibe nada y deja la cuenta con
      * un segundo factor muerto.
      */

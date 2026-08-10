@@ -27,7 +27,7 @@ public class FileController {
      * Categorías servidas SIN autenticación. Hoy está vacío: ningún archivo
      * sale de esta API sin sesión válida.
      *
-     * Histórico de lo que hubo acá y por qué se fue:
+     * Histórico de lo que hubo aquí y por qué se fue:
      *
      *   boletin, seguridad → alojaban documentos internos reales (manuales,
      *       podcasts, infografías). Su confidencialidad dependía solo de lo
@@ -41,11 +41,11 @@ public class FileController {
      *
      * Se conserva el set en vez de borrar la rama: reabrir una categoría es
      * una decisión que debe poder tomarse y revisarse en un solo lugar. Antes
-     * de agregar una, revisá que el contenido sea genuinamente difundible y
+     * de agregar una, revisa que el contenido sea genuinamente difundible y
      * que exista una razón técnica que impida la descarga autenticada.
      *
      * OJO: espejado en `PUBLIC_CATEGORIES` de filePresenter.jsx en
-     * biblioteca-frontend. Si cambia acá, tiene que cambiar allá EN EL MISMO
+     * biblioteca-frontend. Si cambia aquí, tiene que cambiar allá EN EL MISMO
      * despliegue.
      */
     private static final Set<String> PUBLIC_CATEGORIES = Set.of();

@@ -13,9 +13,9 @@ import java.util.Locale;
  *
  * TODO valor que venga del usuario o de la request pasa por
  * {@link HtmlUtils#htmlEscape} antes de entrar al HTML. El nombre completo, el
- * User-Agent y la IP los controla (o los influye) quien inicia sesión, y acá
+ * User-Agent y la IP los controla (o los influye) quien inicia sesión, y aquí
  * terminan dentro de un documento que un cliente de correo va a renderizar —
- * el mismo razonamiento del SAFE_TEXT_REGEX del perfil, pero acá sin React
+ * el mismo razonamiento del SAFE_TEXT_REGEX del perfil, pero aquí sin React
  * escapando de fondo.
  *
  * Cada mensaje lleva versión HTML y versión de texto plano: sin la segunda, un
@@ -48,33 +48,33 @@ public class EmailTemplates {
 
     public MailService.Mail loginCode(String displayName, String code, long minutes) {
         String html = wrap("Tu código para iniciar sesión",
-                paragraph("Hola " + esc(displayName) + ", usá este código para completar tu inicio de sesión:")
+                paragraph("Hola " + esc(displayName) + ", usa este código para completar tu inicio de sesión:")
               + codeBlock(code)
               + paragraph("El código vence en " + minutes + " minutos y sirve una sola vez.")
               + warning("Si no estabas iniciando sesión, alguien conoce tu contraseña. "
-                      + "Cambiala cuanto antes desde tu perfil."));
+                      + "Cámbiala cuanto antes desde tu perfil."));
         String text = "Hola " + displayName + ",\n\n"
                 + "Tu código para iniciar sesión es: " + code + "\n\n"
                 + "Vence en " + minutes + " minutos y sirve una sola vez.\n\n"
-                + "Si no estabas iniciando sesión, alguien conoce tu contraseña: cambiala cuanto antes.\n\n"
+                + "Si no estabas iniciando sesión, alguien conoce tu contraseña: cámbiala cuanto antes.\n\n"
                 + "— " + appName;
         return new MailService.Mail(appName + " · Código de acceso: " + code, html, text);
     }
 
     public MailService.Mail verifyEmailCode(String displayName, String code, long minutes) {
-        String html = wrap("Confirmá tu correo",
-                paragraph("Hola " + esc(displayName) + ", ingresá este código en tu perfil para "
+        String html = wrap("Confirma tu correo",
+                paragraph("Hola " + esc(displayName) + ", ingresa este código en tu perfil para "
                         + "confirmar que esta dirección es tuya:")
               + codeBlock(code)
               + paragraph("El código vence en " + minutes + " minutos.")
-              + warning("Si no pediste esto, ignorá el mensaje: sin el código la dirección "
+              + warning("Si no pediste esto, ignora el mensaje: sin el código la dirección "
                       + "no queda asociada a ninguna cuenta."));
         String text = "Hola " + displayName + ",\n\n"
                 + "Tu código de confirmación es: " + code + "\n\n"
                 + "Vence en " + minutes + " minutos.\n\n"
-                + "Si no pediste esto, ignorá el mensaje.\n\n"
+                + "Si no pediste esto, ignora el mensaje.\n\n"
                 + "— " + appName;
-        return new MailService.Mail(appName + " · Confirmá tu correo: " + code, html, text);
+        return new MailService.Mail(appName + " · Confirma tu correo: " + code, html, text);
     }
 
     // ------------------------------------------------------------------
@@ -93,15 +93,15 @@ public class EmailTemplates {
         String html = wrap(title,
                 paragraph("Hola " + esc(displayName) + ", " + lead)
               + detailTable(device, ip, when)
-              + paragraph("Si fuiste vos, no tenés que hacer nada.")
-              + warning("Si no reconocés este acceso, cambiá tu contraseña y cerrá las demás "
+              + paragraph("Si fuiste tú, no tienes que hacer nada.")
+              + warning("Si no reconoces este acceso, cambia tu contraseña y cierra las demás "
                       + "sesiones desde tu perfil.")
               + button("Ir a mi perfil", appUrl.isBlank() ? null : appUrl + "/perfil"));
         String text = "Hola " + displayName + ",\n\n" + lead + "\n\n"
                 + "Dispositivo: " + device + "\n"
                 + "IP: " + ip + "\n"
                 + "Fecha: " + WHEN.format(when) + "\n\n"
-                + "Si no reconocés este acceso, cambiá tu contraseña y cerrá las demás sesiones "
+                + "Si no reconoces este acceso, cambia tu contraseña y cierra las demás sesiones "
                 + "desde tu perfil.\n\n"
                 + "— " + appName;
         return new MailService.Mail(appName + " · " + title, html, text);
@@ -119,11 +119,11 @@ public class EmailTemplates {
                         + "a <strong>" + esc(maskedNew) + "</strong>.")
               + paragraph("Este mensaje va a tu dirección anterior. A partir de ahora, los códigos "
                         + "y avisos van a la nueva.")
-              + warning("Si no hiciste este cambio, tu cuenta está comprometida: avisá a un "
+              + warning("Si no hiciste este cambio, tu cuenta está comprometida: avisa a un "
                       + "administrador de inmediato."));
         String text = "Hola " + displayName + ",\n\n"
                 + "El correo asociado a tu cuenta se cambió a " + maskedNew + ".\n\n"
-                + "Si no hiciste este cambio, tu cuenta está comprometida: avisá a un "
+                + "Si no hiciste este cambio, tu cuenta está comprometida: avisa a un "
                 + "administrador de inmediato.\n\n"
                 + "— " + appName;
         return new MailService.Mail(appName + " · El correo de tu cuenta cambió", html, text);
@@ -139,13 +139,13 @@ public class EmailTemplates {
                 paragraph("Hola " + esc(displayName) + ", los avisos de inicio de sesión de tu "
                         + "cuenta quedaron desactivados el " + esc(WHEN.format(when)) + ".")
               + paragraph("Este es el último aviso que vas a recibir sobre accesos a tu cuenta.")
-              + warning("Si no fuiste vos, alguien con tu contraseña está intentando entrar sin "
-                      + "que te enteres. Cambiala ahora y avisá a un administrador.")
+              + warning("Si no fuiste tú, alguien con tu contraseña está intentando entrar sin "
+                      + "que te enteres. Cámbiala ahora y avisa a un administrador.")
               + button("Ir a mi perfil", appUrl.isBlank() ? null : appUrl + "/perfil"));
         String text = "Hola " + displayName + ",\n\n"
                 + "Los avisos de inicio de sesión de tu cuenta quedaron desactivados el "
                 + WHEN.format(when) + ". Este es el último aviso que vas a recibir sobre accesos.\n\n"
-                + "Si no fuiste vos, cambiá tu contraseña ahora y avisá a un administrador.\n\n"
+                + "Si no fuiste tú, cambia tu contraseña ahora y avisa a un administrador.\n\n"
                 + "— " + appName;
         return new MailService.Mail(appName + " · Se desactivaron los avisos de inicio de sesión", html, text);
     }
@@ -154,11 +154,11 @@ public class EmailTemplates {
         String html = wrap("Se quitó el correo de tu cuenta",
                 paragraph("Hola " + esc(displayName) + ", esta dirección ya no está asociada a tu "
                         + "cuenta. Dejás de recibir códigos de acceso y avisos de inicio de sesión.")
-              + warning("Si no hiciste este cambio, tu cuenta está comprometida: avisá a un "
+              + warning("Si no hiciste este cambio, tu cuenta está comprometida: avisa a un "
                       + "administrador de inmediato."));
         String text = "Hola " + displayName + ",\n\n"
                 + "Esta dirección ya no está asociada a tu cuenta.\n\n"
-                + "Si no hiciste este cambio, avisá a un administrador de inmediato.\n\n"
+                + "Si no hiciste este cambio, avisa a un administrador de inmediato.\n\n"
                 + "— " + appName;
         return new MailService.Mail(appName + " · Se quitó el correo de tu cuenta", html, text);
     }

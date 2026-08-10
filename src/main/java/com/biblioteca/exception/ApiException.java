@@ -20,7 +20,7 @@ public class ApiException extends RuntimeException {
     public static ApiException notFound(String msg)     { return new ApiException(HttpStatus.NOT_FOUND, msg); }
 
     /** Techos de emisión (cooldown entre reenvíos, códigos por hora). El 429 le
-     *  dice al cliente "esperá", que es distinto de "esto está mal". */
+     *  dice al cliente "espera", que es distinto de "esto está mal". */
     public static ApiException tooManyRequests(String msg) {
         return new ApiException(HttpStatus.TOO_MANY_REQUESTS, msg);
     }

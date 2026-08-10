@@ -26,7 +26,7 @@
 --
 -- Contexto (4) — known_devices:
 -- El aviso "iniciaste sesión en un dispositivo nuevo" necesita saber qué es
--- viejo. Se identifica por una cookie opaca y aleatoria (hash guardado acá),
+-- viejo. Se identifica por una cookie opaca y aleatoria (hash guardado aquí),
 -- no por IP: la IP cambia sola al pasar de wifi a datos móviles y generaría
 -- avisos falsos hasta que el usuario los ignore, que es la forma más rápida
 -- de que un aviso real pase desapercibido.
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS email_codes (
     purpose      VARCHAR(20)  NOT NULL,
     -- HMAC-SHA256 en hex (64 chars). Ver contexto (2) arriba.
     code_hash    VARCHAR(64)  NOT NULL,
-    -- A qué dirección se envió. Se congela acá para que un cambio de correo
+    -- A qué dirección se envió. Se congela aquí para que un cambio de correo
     -- entre la emisión y la verificación no redirija un código ya en vuelo.
     destination  VARCHAR(254) NOT NULL,
     attempts     SMALLINT     NOT NULL DEFAULT 0,

@@ -7,7 +7,7 @@ import jakarta.validation.constraints.NotBlank;
  *
  * Solo lleva el step token, y eso es deliberado: NO recibe username ni id de
  * usuario. Si los recibiera, cualquiera podría disparar códigos hacia el buzón
- * de cualquier cuenta con solo saber un nombre de usuario. Acá el destinatario
+ * de cualquier cuenta con solo saber un nombre de usuario. Aquí el destinatario
  * sale del token, que solo se emite después de validar la contraseña.
  */
 public class RequestEmailCodeRequest {
