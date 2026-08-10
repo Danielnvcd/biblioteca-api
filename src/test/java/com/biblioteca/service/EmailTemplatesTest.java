@@ -72,6 +72,24 @@ class EmailTemplatesTest {
 
         assertThat(mail.html()).isNotBlank();
         assertThat(mail.html()).doesNotContain("<a href");
+        // Sin dónde alojarlo no se referencia un logo que no existe: la marca
+        // cae al nombre escrito en vez de a una imagen rota.
+        assertThat(mail.html()).doesNotContain("<img");
+        assertThat(mail.html()).contains("Biblioteca Maxipet");
+    }
+
+    @Test
+    void elLogoSaleDelFrontendYSobreviveAUnaBarraDeMas() {
+        EmailTemplates conBarra = new EmailTemplates("Biblioteca Maxipet", "https://app.maxipet.com/");
+
+        var mail = conBarra.loginCode("Ana", "12345678", 10);
+
+        assertThat(mail.html()).contains("src=\"https://app.maxipet.com/logo.png\"");
+        // width como ATRIBUTO, no solo en el CSS: Outlook ignora el ancho por
+        // CSS en imágenes y dibujaría los 736 px reales del archivo.
+        assertThat(mail.html()).contains("width=\"140\"");
+        // El alt lleva el nombre para cuando el cliente bloquea las imágenes.
+        assertThat(mail.html()).contains("alt=\"Biblioteca Maxipet\"");
     }
 
     @Test

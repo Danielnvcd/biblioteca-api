@@ -172,8 +172,8 @@ public class EmailTemplates {
     }
 
     /**
-     * Envoltura común. Tabla y estilos en línea porque los clientes de correo
-     * ignoran hojas de estilo externas y buena parte de flexbox/grid.
+     * Envoltura común. Tabla y estilos EN LÍNEA porque los clientes de correo
+     * ignoran las hojas de estilo externas y buena parte de flexbox/grid.
      */
     private String wrap(String title, String body) {
         return """
@@ -181,8 +181,8 @@ public class EmailTemplates {
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%%" style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid %s;border-radius:12px;">
                 <tr>
                   <td style="padding:28px 32px 8px 32px;">
-                    <div style="font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:%s;">%s</div>
-                    <h1 style="margin:8px 0 0 0;font-size:20px;line-height:1.3;font-weight:600;color:%s;">%s</h1>
+                    %s
+                    <h1 style="margin:16px 0 0 0;font-size:20px;line-height:1.3;font-weight:600;color:%s;">%s</h1>
                   </td>
                 </tr>
                 <tr><td style="padding:8px 32px 28px 32px;">%s</td></tr>
@@ -195,7 +195,52 @@ public class EmailTemplates {
                 </tr>
               </table>
             </div>
-            """.formatted(BORDER, BRAND, esc(appName), INK, esc(title), body, BORDER, MUTED, esc(appName));
+            """.formatted(BORDER, header(), INK, esc(title), body, BORDER, MUTED, esc(appName));
+    }
+
+    /**
+     * Cabecera de marca: el logo si hay dónde alojarlo, y si no el nombre
+     * escrito.
+     *
+     * Por qué una URL remota y no la imagen incrustada: en correo hay tres
+     * caminos y dos no sirven. Los {@code data:} URI los descarta Gmail sin
+     * avisar, y los adjuntos en línea ({@code cid:}) obligan a mandar el binario
+     * en cada mensaje y dependen de que el proveedor los soporte. Una URL
+     * pública es lo que hacen todos y lo que mejor se comporta.
+     *
+     * El logo sale del FRONTEND ({@code app-url} + /logo.png), que ya lo publica
+     * para la pantalla de login. Se aprovecha que ya está ahí en vez de montar
+     * otro sitio donde alojarlo — y como la API exige sesión en /api/files, ese
+     * camino no servía.
+     *
+     * Detalles que parecen menores y no lo son:
+     *
+     *  - Muchos clientes (Outlook de escritorio, buena parte del correo
+     *    corporativo) BLOQUEAN las imágenes remotas por defecto. Por eso el
+     *    {@code alt} lleva estilos propios: cuando la imagen no carga, el texto
+     *    alternativo aparece con el color y el peso de la marca en vez de un
+     *    ícono roto.
+     *
+     *  - El {@code width} va como atributo HTML además de en el CSS: Outlook
+     *    ignora el ancho por CSS en las imágenes y las dibuja a tamaño real (el
+     *    archivo mide 736 px, o sea que reventaría el ancho de la tarjeta).
+     *
+     *  - Se muestra a 140 px teniendo 736 nativos, así que en pantallas de alta
+     *    densidad se ve nítido sin subir una versión aparte.
+     */
+    private String header() {
+        if (appUrl.isBlank()) {
+            return "<div style=\"font-size:18px;font-weight:700;letter-spacing:-.01em;color:"
+                 + BRAND + ";\">" + esc(appName) + "</div>";
+        }
+        String src = appUrl.replaceAll("/+$", "") + "/logo.png";
+        return "<img src=\"" + esc(src) + "\" alt=\"" + esc(appName) + "\" width=\"140\""
+             + " style=\"display:block;border:0;outline:none;text-decoration:none;"
+             + "width:140px;max-width:140px;height:auto;"
+             // Estilos que solo se ven si el cliente bloquea la imagen: el alt
+             // hereda tipografía y color, y así el bloqueo degrada a la marca
+             // escrita en vez de a un recuadro vacío.
+             + "font-size:18px;font-weight:700;color:" + BRAND + ";\">";
     }
 
     private static String paragraph(String htmlContent) {

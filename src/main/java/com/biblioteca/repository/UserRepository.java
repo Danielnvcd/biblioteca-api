@@ -21,6 +21,17 @@ public interface UserRepository extends JpaRepository<User, Integer> {
      * y aprovecha el índice único parcial de V9.
      */
     Optional<User> findByEmail(String email);
+
+    /**
+     * ¿Hay OTRA cuenta apuntando a esta misma foto?
+     *
+     * Se consulta antes de borrar un avatar del disco. Los nombres que genera
+     * hoy FileStorageService llevan timestamp + UUID, así que no deberían
+     * repetirse — pero quedan archivos heredados de la app anterior con nombres
+     * previsibles ({@code user_1_foto.jpg}), y borrar por las malas la foto de
+     * otra persona es de esos errores que nadie relaciona con la causa.
+     */
+    boolean existsByProfilePicAndIdNot(String profilePic, Integer id);
     @Query("SELECT new com.biblioteca.security.UserSecurityState(" +
            "u.id, u.username, u.role, u.passwordChangedAt, u.lastSeen) " +
            "FROM User u WHERE u.id = :id")
