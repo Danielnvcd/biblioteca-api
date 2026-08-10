@@ -15,6 +15,26 @@ public class UserDto {
     private boolean totpEnabled;
     private LocalDateTime lastSeen;
 
+    /**
+     * Correo de la cuenta. Solo se llena en la vista del PROPIO usuario (o de
+     * un super_admin): en el directorio va siempre null, porque una lista de
+     * correos internos es material de phishing servido en bandeja.
+     */
+    private String email;
+    private boolean emailVerified;
+    /** Dirección dada de alta y todavía sin confirmar, si hay una en curso. */
+    private String pendingEmail;
+    private boolean email2faEnabled;
+    /**
+     * false en las cuentas de administración, que no pueden usar el correo
+     * como segundo factor (ver Permissions.canUseEmailAsSecondFactor). Va en
+     * el DTO para que la pantalla explique el porqué en vez de dejar un
+     * interruptor que devuelve 403 al tocarlo.
+     */
+    private boolean emailFactorAllowed;
+    /** 'off' | 'new_device' | 'always' */
+    private String loginAlerts;
+
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
     public String getUsername() { return username; }
@@ -37,4 +57,16 @@ public class UserDto {
     public void setTotpEnabled(boolean totpEnabled) { this.totpEnabled = totpEnabled; }
     public LocalDateTime getLastSeen() { return lastSeen; }
     public void setLastSeen(LocalDateTime lastSeen) { this.lastSeen = lastSeen; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public boolean isEmailVerified() { return emailVerified; }
+    public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
+    public String getPendingEmail() { return pendingEmail; }
+    public void setPendingEmail(String pendingEmail) { this.pendingEmail = pendingEmail; }
+    public boolean isEmail2faEnabled() { return email2faEnabled; }
+    public void setEmail2faEnabled(boolean email2faEnabled) { this.email2faEnabled = email2faEnabled; }
+    public boolean isEmailFactorAllowed() { return emailFactorAllowed; }
+    public void setEmailFactorAllowed(boolean emailFactorAllowed) { this.emailFactorAllowed = emailFactorAllowed; }
+    public String getLoginAlerts() { return loginAlerts; }
+    public void setLoginAlerts(String loginAlerts) { this.loginAlerts = loginAlerts; }
 }

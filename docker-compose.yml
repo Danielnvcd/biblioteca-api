@@ -89,6 +89,21 @@ services:
       SPRING_DATA_REDIS_URL: ${SPRING_DATA_REDIS_URL:-redis://redis:6379}
       # Sólo poner =true en el .env si REALMENTE corrés Redis (RATE_LIMIT_BACKEND=redis).
       MANAGEMENT_HEALTH_REDIS_ENABLED: ${MANAGEMENT_HEALTH_REDIS_ENABLED:-false}
+      # ---- Correo transaccional (Resend) ----
+      # Con MAIL_ENABLED=false el stack levanta igual y los flujos que dependen
+      # del correo responden "no configurado" en vez de fallar al enviar. Si se
+      # pone en true, ProdSecretsValidator exige que RESEND_API_KEY y MAIL_FROM
+      # tengan valor y se niega a arrancar sin ellos — mail activado y roto es
+      # peor que apagado: los avisos de intrusión fallarían en silencio.
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      # Remitente sobre el dominio verificado en Resend. Admite
+      # "no-reply@dominio.com" o "Biblioteca Maxipet <no-reply@dominio.com>".
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_APP_NAME: ${MAIL_APP_NAME:-Biblioteca Maxipet}
+      # URL pública del FRONTEND — el botón "Ir a mi perfil" de los avisos.
+      # Si queda vacía, el correo sale sin botón (sigue siendo válido).
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
     volumes:
       # Bind-mount al host para que nginx pueda servir los uploads vía
       # X-Accel-Redirect (sendfile directo, sin pasar por la JVM). El path del

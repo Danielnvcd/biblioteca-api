@@ -56,14 +56,20 @@ public class JwtTokenProvider {
     }
 
     /**
-     * Short-lived token (5 min) emitted after a successful password check when
-     * the user has 2FA enabled. Required by /verify-2fa to prove the caller
-     * actually completed step 1. Carries the "remember" choice so it can't be
-     * tampered with between login and verify-2fa.
+     * Short-lived token emitted after a successful password check when the
+     * user has 2FA enabled. Required by /verify-2fa and /verify-email-code to
+     * prove the caller actually completed step 1. Carries the "remember"
+     * choice so it can't be tampered with between login and verification.
+     *
+     * Duran 10 y no 5 minutos desde que existe el segundo factor por correo:
+     * el código enviado vive 10 minutos, y un step token más corto dejaba al
+     * usuario con un código válido en la bandeja y ninguna pantalla donde
+     * usarlo. Sigue sirviendo únicamente para verificar el segundo factor —
+     * no autoriza ninguna otra operación.
      */
     public String generate2faStepToken(Integer userId, String username, boolean remember) {
         Date now = new Date();
-        Date expiry = new Date(now.getTime() + 5 * 60 * 1000L);
+        Date expiry = new Date(now.getTime() + 10 * 60 * 1000L);
         return Jwts.builder()
                 .subject(userId.toString())
                 .issuer(ISSUER)

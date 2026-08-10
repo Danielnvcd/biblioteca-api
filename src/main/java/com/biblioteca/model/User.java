@@ -78,6 +78,41 @@ public class User {
     @Column(name = "totp_pending_secret", columnDefinition = "TEXT")
     private String totpPendingSecret;
 
+    /**
+     * Correo verificado de la cuenta. Solo se llena desde {@link #pendingEmail}
+     * cuando un código enviado a esa dirección volvió correcto: mientras esté
+     * acá, alguien probó que puede leer ese buzón.
+     */
+    @Column(length = 254)
+    private String email;
+
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified = false;
+
+    /** Dirección propuesta y todavía sin probar. Ver V9 para el porqué de la separación. */
+    @Column(name = "pending_email", length = 254)
+    private String pendingEmail;
+
+    /** Segundo factor por código enviado al correo. Exige emailVerified. */
+    @Column(name = "email_2fa_enabled", nullable = false)
+    private boolean email2faEnabled = false;
+
+    /** 'off' | 'new_device' | 'always' — ver {@code LoginAlertService}. */
+    @Column(name = "login_alerts", nullable = false, length = 16)
+    private String loginAlerts = "new_device";
+
+    /**
+     * Fallos consecutivos verificando un código enviado por correo. Columna
+     * propia, no compartida con los contadores de TOTP ni de contraseña: son
+     * factores distintos y un fallo en uno no debe bloquear el flujo del otro.
+     */
+    @Column(name = "failed_email_code_attempts", nullable = false)
+    private int failedEmailCodeAttempts = 0;
+
+    /** Si está en el futuro, no se verifica ningún código por correo. */
+    @Column(name = "email_code_locked_until")
+    private LocalDateTime emailCodeLockedUntil;
+
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
     public String getUsername() { return username; }
@@ -114,4 +149,27 @@ public class User {
     public void setTotpLockedUntil(LocalDateTime totpLockedUntil) { this.totpLockedUntil = totpLockedUntil; }
     public String getTotpPendingSecret() { return totpPendingSecret; }
     public void setTotpPendingSecret(String totpPendingSecret) { this.totpPendingSecret = totpPendingSecret; }
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+    public boolean isEmailVerified() { return emailVerified; }
+    public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
+    public String getPendingEmail() { return pendingEmail; }
+    public void setPendingEmail(String pendingEmail) { this.pendingEmail = pendingEmail; }
+    public boolean isEmail2faEnabled() { return email2faEnabled; }
+    public void setEmail2faEnabled(boolean email2faEnabled) { this.email2faEnabled = email2faEnabled; }
+    public String getLoginAlerts() { return loginAlerts; }
+    public void setLoginAlerts(String loginAlerts) { this.loginAlerts = loginAlerts; }
+    public int getFailedEmailCodeAttempts() { return failedEmailCodeAttempts; }
+    public void setFailedEmailCodeAttempts(int failedEmailCodeAttempts) { this.failedEmailCodeAttempts = failedEmailCodeAttempts; }
+    public LocalDateTime getEmailCodeLockedUntil() { return emailCodeLockedUntil; }
+    public void setEmailCodeLockedUntil(LocalDateTime emailCodeLockedUntil) { this.emailCodeLockedUntil = emailCodeLockedUntil; }
+
+    /**
+     * true cuando el correo puede usarse como canal de confianza: hay
+     * dirección y alguien probó que la lee. Es la precondición de todo lo
+     * demás (2FA por correo, avisos de inicio de sesión).
+     */
+    public boolean hasUsableEmail() {
+        return email != null && !email.isBlank() && emailVerified;
+    }
 }

@@ -65,6 +65,24 @@ public final class Permissions {
         return username != null && PROTECTED_USERNAMES.contains(username);
     }
 
+    /**
+     * Cuentas a las que NO se les ofrece el código por correo como segundo
+     * factor.
+     *
+     * El motivo: cuando una cuenta tiene dos métodos de 2FA alternativos, su
+     * seguridad real es la del más débil de los dos — basta comprometer uno
+     * para entrar. Un buzón de correo es bastante más fácil de comprometer que
+     * un secreto TOTP guardado en un dispositivo, y en estas cuentas eso
+     * equivaldría a entregar el sistema entero.
+     *
+     * No es una restricción sobre el correo en sí: estas cuentas lo siguen
+     * usando para los AVISOS de inicio de sesión, que es puro beneficio y no
+     * abre ninguna vía de acceso.
+     */
+    public static boolean canUseEmailAsSecondFactor(String role, String username) {
+        return !ROLE_SUPER_ADMIN.equals(role) && !isProtectedUsername(username);
+    }
+
     /* ---------- Guards (throw 403 if not allowed) ---------- */
 
     public static void requireSuperAdmin(UserPrincipal p) {

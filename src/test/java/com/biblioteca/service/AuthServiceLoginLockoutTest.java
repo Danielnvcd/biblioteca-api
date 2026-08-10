@@ -52,17 +52,37 @@ class AuthServiceLoginLockoutTest {
         EncryptionService encryptionService = mock(EncryptionService.class);
 
         when(passwordEncoder.encode(any())).thenReturn("$2a$12$dummydummydummydummydum");
+        LoginAlertService loginAlertService = mock(LoginAlertService.class);
+        // Sin dispositivo conocido y sin aviso: estos tests miran el lockout,
+        // no la notificación, pero issueSession() pasa por acá siempre.
+        when(loginAlertService.registerDevice(any(), any(), any(), any()))
+                .thenReturn(new LoginAlertService.DeviceCheck("device-cookie", false, "Chrome"));
+
         authService = new AuthService(userRepository, passwordEncoder, tokenProvider,
                 totpService, refreshTokenService, encryptionService,
-                mock(com.biblioteca.security.AccessTokenDenylistService.class));
+                mock(com.biblioteca.security.AccessTokenDenylistService.class),
+                mock(EmailCodeService.class), loginAlertService,
+                mock(MailService.class), mock(EmailTemplates.class));
     }
 
-    private static User user(String name) {
+    /** Contexto de request para los tests: los avisos están mockeados. */
+    private static final AuthService.LoginContext CTX =
+            new AuthService.LoginContext("1.1.1.1", "ua", null);
+
+    private User user(String name) {
         User u = new User();
         u.setId(7);
         u.setUsername(name);
         u.setPasswordHash(REAL_HASH);
         u.setRole("user");
+        // Emula el UPDATE condicional que impone el bloqueo: la base solo lo
+        // aplica si el contador REAL llegó al umbral. El contador ya no se
+        // calcula en Java — se incrementa con un UPDATE y la base decide quién
+        // cruzó el umbral, para que N intentos concurrentes no lean todos el
+        // mismo valor y esquiven el techo entre todos.
+        when(userRepository.lockPasswordIfExhausted(
+                eq(7), org.mockito.ArgumentMatchers.anyInt(), any()))
+                .thenAnswer(inv -> u.getFailedPasswordAttempts() >= (int) inv.getArgument(1) ? 1 : 0);
         return u;
     }
 
@@ -77,7 +97,7 @@ class AuthServiceLoginLockoutTest {
     void unknownUserStillBurnsAHashSoTimingDoesNotLeakExistence() {
         when(userRepository.findByUsername("fantasma")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> authService.login(request("fantasma", "x"), "1.1.1.1", "ua"))
+        assertThatThrownBy(() -> authService.login(request("fantasma", "x"), CTX))
                 .isInstanceOf(ApiException.class)
                 .hasMessage("Credenciales incorrectas");
 
@@ -92,12 +112,12 @@ class AuthServiceLoginLockoutTest {
         when(userRepository.findByUsername("ana")).thenReturn(Optional.of(u));
         when(passwordEncoder.matches("mala", REAL_HASH)).thenReturn(false);
 
-        assertThatThrownBy(() -> authService.login(request("ana", "mala"), "1.1.1.1", "ua"))
+        assertThatThrownBy(() -> authService.login(request("ana", "mala"), CTX))
                 .isInstanceOf(ApiException.class);
 
         assertThat(u.getFailedPasswordAttempts()).isEqualTo(1);
         assertThat(u.getPasswordLockedUntil()).isNull();
-        verify(userRepository).save(u);
+        verify(userRepository).incrementPasswordFailures(7);
     }
 
     @Test
@@ -107,7 +127,7 @@ class AuthServiceLoginLockoutTest {
         when(userRepository.findByUsername("ana")).thenReturn(Optional.of(u));
         when(passwordEncoder.matches("mala", REAL_HASH)).thenReturn(false);
 
-        assertThatThrownBy(() -> authService.login(request("ana", "mala"), "1.1.1.1", "ua"))
+        assertThatThrownBy(() -> authService.login(request("ana", "mala"), CTX))
                 .isInstanceOf(ApiException.class);
 
         assertThat(u.getFailedPasswordAttempts()).isEqualTo(10);
@@ -122,7 +142,7 @@ class AuthServiceLoginLockoutTest {
         when(userRepository.findByUsername("ana")).thenReturn(Optional.of(u));
         when(passwordEncoder.matches("correcta", REAL_HASH)).thenReturn(true);
 
-        assertThatThrownBy(() -> authService.login(request("ana", "correcta"), "1.1.1.1", "ua"))
+        assertThatThrownBy(() -> authService.login(request("ana", "correcta"), CTX))
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getStatus())
                 .isEqualTo(HttpStatus.FORBIDDEN);
@@ -141,7 +161,7 @@ class AuthServiceLoginLockoutTest {
         when(passwordEncoder.matches("correcta", REAL_HASH)).thenReturn(true);
         when(tokenProvider.generateToken(7, "ana", "user")).thenReturn("token-ok");
 
-        var result = authService.login(request("ana", "correcta"), "1.1.1.1", "ua");
+        var result = authService.login(request("ana", "correcta"), CTX);
 
         assertThat(result.body().getToken()).isEqualTo("token-ok");
         assertThat(u.getFailedPasswordAttempts()).isZero();
@@ -156,10 +176,10 @@ class AuthServiceLoginLockoutTest {
         when(passwordEncoder.matches("correcta", REAL_HASH)).thenReturn(true);
         when(tokenProvider.generateToken(7, "ana", "user")).thenReturn("token-ok");
 
-        authService.login(request("ana", "correcta"), "1.1.1.1", "ua");
+        authService.login(request("ana", "correcta"), CTX);
 
         assertThat(u.getFailedPasswordAttempts()).isZero();
-        verify(userRepository).save(u);
+        verify(userRepository).clearPasswordFailures(7);
     }
 
     @Test
@@ -169,7 +189,7 @@ class AuthServiceLoginLockoutTest {
         when(passwordEncoder.matches("correcta", REAL_HASH)).thenReturn(true);
         when(tokenProvider.generateToken(7, "ana", "user")).thenReturn("token-ok");
 
-        var result = authService.login(request("ana", "correcta"), "1.1.1.1", "ua");
+        var result = authService.login(request("ana", "correcta"), CTX);
 
         assertThat(result.refreshToken()).isNull();
         verify(refreshTokenService, never()).issue(any(), any(), any());
