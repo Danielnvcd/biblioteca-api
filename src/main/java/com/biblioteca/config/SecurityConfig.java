@@ -85,7 +85,13 @@ public class SecurityConfig {
             .exceptionHandling(eh -> eh.authenticationEntryPoint(authEntryPoint))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                // /request-email-code y /verify-email-code van sin sesión por
+                // la misma razón que /verify-2fa: ocurren ENTRE la contraseña
+                // y la sesión, así que todavía no hay access token. Lo que
+                // autoriza es el step token de scope=2fa-pending que valida
+                // AuthService, y sin él no hacen nada.
                 .requestMatchers("/api/auth/login", "/api/auth/verify-2fa",
+                                 "/api/auth/request-email-code", "/api/auth/verify-email-code",
                                  "/api/auth/refresh", "/api/auth/logout").permitAll()
                 // /api/files/** exige sesión. Antes era permitAll para que un
                 // <img src> del navegador pudiera cargar avatares y boletines

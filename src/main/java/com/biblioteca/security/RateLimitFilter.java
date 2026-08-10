@@ -63,6 +63,22 @@ public class RateLimitFilter extends OncePerRequestFilter {
             // contraseña correcta, los intentos de código quedaban ilimitados y
             // un espacio de 10^6 se recorre. Este bucket es el único techo.
             new Rule("/api/auth/disable-2fa",     () -> config(5,  Duration.ofMinutes(1))),
+            // Emisión de códigos por correo. El techo REAL de emisión vive en
+            // EmailCodeService (cooldown de 60 s, 3 por 15 min, 10 por hora) y
+            // está atado a la cuenta, no a la IP — este bucket solo evita que
+            // una sola IP moleste a muchas cuentas a la vez.
+            new Rule("/api/auth/request-email-code", () -> config(5,  Duration.ofMinutes(1))),
+            // Verificación del código de acceso: mismo techo que verify-2fa.
+            // Igual que allá, el techo que de verdad frena la fuerza bruta es el
+            // de la cuenta (5 intentos por código + bloqueo de 15 min), porque
+            // un límite por IP no cubre a un atacante que llega desde varias.
+            new Rule("/api/auth/verify-email-code",  () -> config(8,  Duration.ofMinutes(1))),
+            // Todo el bloque del correo del perfil bajo un mismo bucket:
+            // /email, /email/confirm, /email/resend, /email/remove y
+            // /email/preferences — matchesRule() acepta el prefijo seguido de
+            // "/", y desde que el filtro mira también PUT y DELETE ninguna de
+            // esas rutas se escapa por el verbo.
+            new Rule("/api/auth/email",             () -> config(8,  Duration.ofMinutes(1))),
     };
 
     private static BucketConfiguration config(long capacity, Duration window) {
@@ -74,10 +90,20 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 .build();
     }
 
+    /**
+     * Métodos que el limitador vigila. Antes era solo POST, y eso dejaba un
+     * hueco a medida que aparecían endpoints sensibles con otros verbos: un
+     * PUT o un DELETE sobre las mismas rutas pasaba sin bucket. Los verbos que
+     * no modifican nada (GET, HEAD) quedan fuera a propósito — encarecerlos no
+     * frena ningún ataque de credenciales y sí penaliza el uso normal.
+     */
+    private static final java.util.Set<String> GUARDED_METHODS =
+            java.util.Set.of("POST", "PUT", "PATCH", "DELETE");
+
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
             throws ServletException, IOException {
-        if (!enabled || !"POST".equalsIgnoreCase(req.getMethod())) {
+        if (!enabled || !GUARDED_METHODS.contains(req.getMethod().toUpperCase(java.util.Locale.ROOT))) {
             chain.doFilter(req, res);
             return;
         }

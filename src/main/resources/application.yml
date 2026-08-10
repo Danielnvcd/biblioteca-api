@@ -69,6 +69,24 @@ app:
     # Base64 of a random 256-bit key. Dev fallback so local runs work; prod
     # MUST set APP_ENCRYPTION_KEY (see application-prod.yml).
     key: ${APP_ENCRYPTION_KEY}
+  mail:
+    # Envío transaccional vía Resend (códigos de acceso, verificación de correo
+    # y avisos de inicio de sesión).
+    #
+    # Apagado por defecto: sin API key el arranque no debe fallar ni en dev ni
+    # en un entorno de pruebas. Con enabled=false, MailService no llama a nadie
+    # y los flujos que dependen del correo devuelven un error claro en vez de
+    # quedarse esperando un mensaje que no va a llegar.
+    enabled: ${MAIL_ENABLED:false}
+    api-key: ${RESEND_API_KEY:}
+    # Debe ser un remitente del dominio verificado en Resend. Acepta tanto
+    # "no-reply@dominio.com" como "Nombre <no-reply@dominio.com>".
+    from: ${MAIL_FROM:}
+    base-url: ${MAIL_BASE_URL:https://api.resend.com}
+    app-name: ${MAIL_APP_NAME:Biblioteca Maxipet}
+    # URL pública del FRONTEND — se usa para el botón "Ir a mi perfil" de los
+    # avisos. Si queda vacía, el botón simplemente no se dibuja.
+    app-url: ${APP_PUBLIC_URL:}
   upload:
     dir: ${UPLOAD_DIR:./uploads}
   allowed-extensions: pdf,doc,docx,ppt,pptx,xls,xlsx,xlsm,jpg,png,mp4,mp3,wav,heic

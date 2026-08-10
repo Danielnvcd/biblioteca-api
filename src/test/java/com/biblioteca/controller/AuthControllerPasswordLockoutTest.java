@@ -18,10 +18,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -70,6 +69,7 @@ class AuthControllerPasswordLockoutTest {
                 passwordEncoder,
                 mock(QrCodeService.class),
                 mock(RefreshCookieFactory.class),
+                mock(com.biblioteca.security.DeviceCookieFactory.class),
                 mock(RefreshTokenService.class),
                 mock(TrustedOriginValidator.class),
                 mock(AuditLogRepository.class));
@@ -108,10 +108,11 @@ class AuthControllerPasswordLockoutTest {
                 principal(), body("000000"), mock(HttpServletRequest.class)))
                 .isInstanceOf(ApiException.class);
 
-        // Lo que se protege: el reset se guardó ANTES de que el código fallara.
-        verify(userRepository).save(user);
-        assertThat(user.getFailedPasswordAttempts()).isZero();
-        assertThat(user.getPasswordLockedUntil()).isNull();
+        // Lo que se protege: el reset se pidió ANTES de que el código fallara.
+        // La persistencia en sí vive en AuthService y la cubre
+        // AuthServiceLockoutAtomicityTest; acá lo que importa es que el
+        // controller no se salte el paso cuando el flujo aborta después.
+        verify(authService).clearPasswordFailures(user);
     }
 
     @Test
@@ -126,8 +127,12 @@ class AuthControllerPasswordLockoutTest {
                 principal(), body("000000"), mock(HttpServletRequest.class)))
                 .isInstanceOf(ApiException.class);
 
-        // Sin nada que resetear no hay UPDATE: el camino feliz no debe generar
-        // una escritura por request.
+        // clearPasswordFailures se llama igual — es él quien decide no escribir
+        // si no había nada que limpiar (el camino feliz no debe generar una
+        // escritura por request). Lo que NO puede pasar es que se cuente un
+        // fallo con la contraseña correcta.
+        verify(authService, org.mockito.Mockito.never())
+                .registerPasswordFailure(any(), org.mockito.ArgumentMatchers.anyInt(), any());
         verify(userRepository, org.mockito.Mockito.never()).save(any());
     }
 
@@ -141,8 +146,8 @@ class AuthControllerPasswordLockoutTest {
                 principal(), body("000000"), mock(HttpServletRequest.class)))
                 .isInstanceOf(ApiException.class);
 
-        verify(userRepository).save(user);
-        assertThat(user.getFailedPasswordAttempts()).isEqualTo(5);
-        assertThat(user.getPasswordLockedUntil()).isAfter(LocalDateTime.now());
+        // El umbral que aplica acá es el de /change-password (5), más estricto
+        // que el del login (10) aunque compartan columnas.
+        verify(authService).registerPasswordFailure(user, 5, Duration.ofMinutes(15));
     }
 }

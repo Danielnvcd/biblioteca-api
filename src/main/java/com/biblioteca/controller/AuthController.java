@@ -10,13 +10,16 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import com.biblioteca.security.RefreshTokenService;
+import com.biblioteca.security.DeviceCookieFactory;
 import com.biblioteca.security.Permissions;
 import com.biblioteca.security.RefreshCookieFactory;
 import com.biblioteca.security.TrustedOriginValidator;
 import com.biblioteca.security.UserPrincipal;
 import com.biblioteca.service.AuditService;
 import com.biblioteca.service.AuthService;
+import com.biblioteca.service.EmailCodeService;
 import com.biblioteca.service.FileStorageService;
+import com.biblioteca.service.LoginAlertService;
 import com.biblioteca.service.QrCodeService;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -51,6 +54,7 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final QrCodeService qrCodeService;
     private final RefreshCookieFactory refreshCookieFactory;
+    private final DeviceCookieFactory deviceCookieFactory;
     private final RefreshTokenService refreshTokenService;
     private final TrustedOriginValidator originValidator;
     private final AuditLogRepository auditLogRepository;
@@ -59,10 +63,12 @@ public class AuthController {
                           AuditService auditService, FileStorageService fileStorageService,
                           PasswordEncoder passwordEncoder, QrCodeService qrCodeService,
                           RefreshCookieFactory refreshCookieFactory,
+                          DeviceCookieFactory deviceCookieFactory,
                           RefreshTokenService refreshTokenService,
                           TrustedOriginValidator originValidator,
                           AuditLogRepository auditLogRepository) {
         this.auditLogRepository = auditLogRepository;
+        this.deviceCookieFactory = deviceCookieFactory;
         this.authService = authService;
         this.userRepository = userRepository;
         this.auditService = auditService;
@@ -75,11 +81,14 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest req) {
+    public ResponseEntity<LoginResponse> login(
+            @Valid @RequestBody LoginRequest request,
+            @CookieValue(value = DeviceCookieFactory.COOKIE_NAME, required = false) String deviceCookie,
+            HttpServletRequest req) {
         try {
-            AuthService.AuthResult result = authService.login(request, req.getRemoteAddr(), req.getHeader("User-Agent"));
+            AuthService.AuthResult result = authService.login(request, loginContext(req, deviceCookie));
             auditService.log(request.getUsername(), "Login exitoso", req.getRemoteAddr());
-            return withOptionalRefreshCookie(result);
+            return withAuthCookies(result);
         } catch (ApiException e) {
             auditService.log(request.getUsername(), "Login fallido", req.getRemoteAddr());
             throw e;
@@ -87,11 +96,51 @@ public class AuthController {
     }
 
     @PostMapping("/verify-2fa")
-    public ResponseEntity<LoginResponse> verify2fa(@Valid @RequestBody Verify2faRequest request, HttpServletRequest req) {
-        AuthService.AuthResult result = authService.verify2fa(request, req.getRemoteAddr(), req.getHeader("User-Agent"));
+    public ResponseEntity<LoginResponse> verify2fa(
+            @Valid @RequestBody Verify2faRequest request,
+            @CookieValue(value = DeviceCookieFactory.COOKIE_NAME, required = false) String deviceCookie,
+            HttpServletRequest req) {
+        AuthService.AuthResult result = authService.verify2fa(request, loginContext(req, deviceCookie));
         String who = result.body().getUser() != null ? result.body().getUser().getUsername() : "?";
         auditService.log(who, "Login 2FA exitoso", req.getRemoteAddr());
-        return withOptionalRefreshCookie(result);
+        return withAuthCookies(result);
+    }
+
+    /**
+     * Envía (o reenvía) el código de acceso durante un login pendiente de 2FA.
+     *
+     * permitAll con validación por step token: acá todavía no hay sesión. El
+     * destinatario del correo lo determina el token, nunca el cuerpo del
+     * request — ver {@link RequestEmailCodeRequest}.
+     */
+    @PostMapping("/request-email-code")
+    public ResponseEntity<Map<String, Object>> requestEmailCode(
+            @Valid @RequestBody RequestEmailCodeRequest request, HttpServletRequest req) {
+        originValidator.requireTrustedOrigin(req);
+        EmailCodeService.Issued issued =
+                authService.requestLoginCode(request.getStepToken(), req.getRemoteAddr());
+        return ResponseEntity.ok(Map.of(
+                "message", "Te enviamos un código a tu correo",
+                "maskedEmail", issued.maskedDestination(),
+                "expiresAt", issued.expiresAt()));
+    }
+
+    /** Segundo paso del login cuando el factor elegido es el código por correo. */
+    @PostMapping("/verify-email-code")
+    public ResponseEntity<LoginResponse> verifyEmailCode(
+            @Valid @RequestBody VerifyEmailCodeRequest request,
+            @CookieValue(value = DeviceCookieFactory.COOKIE_NAME, required = false) String deviceCookie,
+            HttpServletRequest req) {
+        AuthService.AuthResult result =
+                authService.verifyEmailCode(request, loginContext(req, deviceCookie));
+        String who = result.body().getUser() != null ? result.body().getUser().getUsername() : "?";
+        auditService.log(who, "Login con código por correo", req.getRemoteAddr());
+        return withAuthCookies(result);
+    }
+
+    private static AuthService.LoginContext loginContext(HttpServletRequest req, String deviceCookie) {
+        return new AuthService.LoginContext(
+                req.getRemoteAddr(), req.getHeader("User-Agent"), deviceCookie);
     }
 
     @PostMapping("/refresh")
@@ -103,7 +152,7 @@ public class AuthController {
         // (curl, server-to-server) se permite.
         originValidator.requireTrustedOrigin(req);
         AuthService.AuthResult result = authService.refresh(currentRefresh, req.getRemoteAddr(), req.getHeader("User-Agent"));
-        return withOptionalRefreshCookie(result);
+        return withAuthCookies(result);
     }
 
     @PostMapping("/logout")
@@ -131,18 +180,25 @@ public class AuthController {
     }
 
     /**
-     * Wraps an AuthResult in a ResponseEntity, attaching the refresh cookie
-     * if one was issued (skipped for 2FA-pending logins, which only return a
-     * step token).
+     * Envuelve un AuthResult adjuntando las cookies que correspondan:
+     *
+     *  - refresh token, solo si se emitió uno (no se emite en los logins que
+     *    quedan pendientes de 2FA, que solo devuelven el step token, ni cuando
+     *    el usuario no pidió "recordarme").
+     *  - cookie de dispositivo, solo cuando la respuesta abre sesión. Se
+     *    reemite en cada inicio para renovarle el vencimiento.
      */
-    private ResponseEntity<LoginResponse> withOptionalRefreshCookie(AuthService.AuthResult result) {
-        if (result.refreshToken() == null) {
-            return ResponseEntity.ok(result.body());
+    private ResponseEntity<LoginResponse> withAuthCookies(AuthService.AuthResult result) {
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok();
+        if (result.refreshToken() != null) {
+            builder.header(HttpHeaders.SET_COOKIE,
+                    refreshCookieFactory.build(result.refreshToken()).toString());
         }
-        ResponseCookie cookie = refreshCookieFactory.build(result.refreshToken());
-        return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, cookie.toString())
-                .body(result.body());
+        if (result.deviceCookie() != null) {
+            builder.header(HttpHeaders.SET_COOKIE,
+                    deviceCookieFactory.build(result.deviceCookie()).toString());
+        }
+        return builder.body(result.body());
     }
 
     @GetMapping("/me")
@@ -239,6 +295,142 @@ public class AuthController {
         auditService.log(principal.getUsername(),
                 "Reseteó el 2FA de " + user.getUsername(), req.getRemoteAddr());
         return ResponseEntity.ok(Map.of("message", "2FA reseteado. El usuario puede configurarlo de nuevo."));
+    }
+
+    // ======================================================================
+    // Correo de la cuenta
+    // ======================================================================
+
+    /**
+     * Da de alta o cambia el correo. Queda PENDIENTE hasta que un código
+     * enviado a esa dirección vuelva correcto.
+     *
+     * Exige la contraseña actual, con el mismo lockout que /change-password: el
+     * correo pasa a ser canal de segundo factor y de aviso de intrusión, así
+     * que un access token robado no puede alcanzar para redirigirlo.
+     */
+    @PostMapping("/email")
+    public ResponseEntity<Map<String, Object>> setEmail(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @Valid @RequestBody SetEmailRequest body,
+                                                        HttpServletRequest req) {
+        User user = userRepository.findById(principal.getId())
+                .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
+        verifyCurrentPasswordWithLockout(user, body.getCurrentPassword());
+
+        EmailCodeService.Issued issued =
+                authService.startEmailChange(user, body.getEmail(), req.getRemoteAddr());
+        auditService.log(user.getUsername(), "Solicitó verificar un correo", req.getRemoteAddr());
+        return ResponseEntity.ok(Map.of(
+                "message", "Te enviamos un código para confirmar la dirección",
+                "maskedEmail", issued.maskedDestination(),
+                "expiresAt", issued.expiresAt()));
+    }
+
+    /** Confirma la dirección pendiente con el código recibido. */
+    @PostMapping("/email/confirm")
+    public ResponseEntity<UserDto> confirmEmail(@AuthenticationPrincipal UserPrincipal principal,
+                                                @Valid @RequestBody ConfirmEmailRequest body,
+                                                HttpServletRequest req) {
+        User user = userRepository.findById(principal.getId())
+                .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
+        authService.confirmEmailChange(user, body.getCode());
+        auditService.log(user.getUsername(), "Confirmó el correo de su cuenta", req.getRemoteAddr());
+        return ResponseEntity.ok(authService.toDto(user));
+    }
+
+    /**
+     * Reenvía el código de confirmación de la dirección pendiente.
+     *
+     * No pide la contraseña de nuevo: el alta ya la pidió, y el código solo
+     * puede ir a la dirección que quedó guardada como pendiente — no hay nada
+     * que un atacante pueda redirigir con esta llamada.
+     */
+    @PostMapping("/email/resend")
+    public ResponseEntity<Map<String, Object>> resendEmailCode(
+            @AuthenticationPrincipal UserPrincipal principal, HttpServletRequest req) {
+        User user = userRepository.findById(principal.getId())
+                .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
+        if (user.getPendingEmail() == null || user.getPendingEmail().isBlank()) {
+            throw ApiException.badRequest("No hay ningún correo pendiente de confirmar");
+        }
+        EmailCodeService.Issued issued =
+                authService.startEmailChange(user, user.getPendingEmail(), req.getRemoteAddr());
+        return ResponseEntity.ok(Map.of(
+                "message", "Te reenviamos el código",
+                "maskedEmail", issued.maskedDestination(),
+                "expiresAt", issued.expiresAt()));
+    }
+
+    /**
+     * Quita el correo de la cuenta (y con él, el 2FA por correo y los avisos).
+     *
+     * Va como POST y no como DELETE aunque la semántica REST pida lo segundo.
+     * Dos razones prácticas: un DELETE con cuerpo es terreno donde proxies,
+     * CDNs y clientes se comportan distinto — y acá el cuerpo lleva la
+     * contraseña, así que perderlo convierte la operación en un 400 confuso —,
+     * y el limitador de peticiones cubre esta ruta sin excepciones especiales.
+     */
+    @PostMapping("/email/remove")
+    public ResponseEntity<UserDto> removeEmail(@AuthenticationPrincipal UserPrincipal principal,
+                                               @Valid @RequestBody RemoveEmailRequest body,
+                                               HttpServletRequest req) {
+        User user = userRepository.findById(principal.getId())
+                .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
+        verifyCurrentPasswordWithLockout(user, body.getCurrentPassword());
+        authService.removeEmail(user);
+        auditService.log(user.getUsername(), "Quitó el correo de su cuenta", req.getRemoteAddr());
+        return ResponseEntity.ok(authService.toDto(user));
+    }
+
+    /**
+     * Preferencias del correo: avisos de inicio de sesión y segundo factor.
+     *
+     * La regla es asimétrica y a propósito: TODO cambio que DEBILITE la
+     * protección de la cuenta exige la contraseña; los que la refuerzan, no.
+     *
+     * Debilitan, y por lo tanto la piden:
+     *   - activar o desactivar el segundo factor por correo;
+     *   - apagar los avisos de inicio de sesión.
+     *
+     * Lo segundo no estaba en el diseño original y es un agujero real: el
+     * aviso existe justamente para delatar a quien ya consiguió entrar, y sin
+     * este requisito bastaba un access token robado para silenciarlo antes de
+     * hacer nada. Subir el nivel de avisos sigue siendo libre — pedir la
+     * contraseña para eso solo consigue que nadie lo configure.
+     */
+    @PutMapping("/email/preferences")
+    public ResponseEntity<UserDto> updateEmailPreferences(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @Valid @RequestBody EmailPreferencesRequest body,
+            HttpServletRequest req) {
+        User user = userRepository.findById(principal.getId())
+                .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
+
+        boolean togglesFactor = body.getEmail2faEnabled() != null
+                && body.getEmail2faEnabled() != user.isEmail2faEnabled();
+        boolean silencesAlerts = LoginAlertService.ALERTS_OFF.equals(body.getLoginAlerts())
+                && !LoginAlertService.ALERTS_OFF.equals(user.getLoginAlerts());
+
+        if (togglesFactor || silencesAlerts) {
+            verifyCurrentPasswordWithLockout(user, body.getCurrentPassword());
+        }
+
+        authService.updateEmailPreferences(user, body);
+
+        if (togglesFactor) {
+            auditService.log(user.getUsername(),
+                    body.getEmail2faEnabled() ? "Activó el código por correo"
+                                              : "Desactivó el código por correo",
+                    req.getRemoteAddr());
+        }
+        if (silencesAlerts) {
+            // Queda en bitácora aunque el correo de aviso falle: son dos
+            // canales independientes para el mismo hecho, y este es el que no
+            // depende de un proveedor externo.
+            auditService.log(user.getUsername(),
+                    "Desactivó los avisos de inicio de sesión", req.getRemoteAddr());
+        }
+        return ResponseEntity.ok(authService.toDto(user));
     }
 
     /**
@@ -339,25 +531,19 @@ public class AuthController {
             throw ApiException.badRequest("Ingresa tu contraseña actual");
         }
         if (!passwordEncoder.matches(current, user.getPasswordHash())) {
-            int attempts = user.getFailedPasswordAttempts() + 1;
-            user.setFailedPasswordAttempts(attempts);
-            if (attempts >= MAX_PASSWORD_ATTEMPTS) {
-                user.setPasswordLockedUntil(LocalDateTime.now().plus(PASSWORD_LOCKOUT));
-            }
-            userRepository.save(user);
+            // Contador e imposición del bloqueo van contra la base de forma
+            // atómica (ver el bloque de comentarios de UserRepository): con un
+            // save() de la entidad, varios intentos concurrentes escriben todos
+            // el mismo valor y el techo de 5 deja de existir.
+            authService.registerPasswordFailure(user, MAX_PASSWORD_ATTEMPTS, PASSWORD_LOCKOUT);
             throw ApiException.unauthorized("Contraseña actual incorrecta");
         }
-        // Éxito → reset si traía estado. El save() explícito importa: en
+        // Éxito → reset si traía estado. La escritura explícita importa: en
         // /change-password el guardado posterior de la contraseña lo arrastraba,
         // pero en /disable-2fa el flujo sigue con la verificación del código
         // TOTP, que lanza si el código es incorrecto — y el reset se perdía sin
-        // llegar nunca a la BD. La entidad no está en una transacción con dirty
-        // checking, así que sin save() el cambio solo vive en memoria.
-        if (user.getFailedPasswordAttempts() != 0 || user.getPasswordLockedUntil() != null) {
-            user.setFailedPasswordAttempts(0);
-            user.setPasswordLockedUntil(null);
-            userRepository.save(user);
-        }
+        // llegar nunca a la BD.
+        authService.clearPasswordFailures(user);
     }
 
     @PostMapping("/register")

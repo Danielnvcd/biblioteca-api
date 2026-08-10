@@ -48,7 +48,9 @@ class AuthServiceDisable2faTest {
         authService = new AuthService(userRepository, passwordEncoder,
                 mock(JwtTokenProvider.class), totpService,
                 mock(RefreshTokenService.class), encryptionService,
-                mock(com.biblioteca.security.AccessTokenDenylistService.class));
+                mock(com.biblioteca.security.AccessTokenDenylistService.class),
+                mock(EmailCodeService.class), mock(LoginAlertService.class),
+                mock(MailService.class), mock(EmailTemplates.class));
     }
 
     private static User conTotp() {
@@ -88,7 +90,7 @@ class AuthServiceDisable2faTest {
         // se afirmaba que no se guardaba nada, y por eso los intentos de código
         // eran ilimitados. Ver AuthServiceTotpLockoutTest.
         assertThat(u.getFailedTotpAttempts()).isEqualTo(1);
-        verify(userRepository).save(u);
+        verify(userRepository).incrementTotpFailures(7);
     }
 
     @Test

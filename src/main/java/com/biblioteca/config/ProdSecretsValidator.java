@@ -33,12 +33,21 @@ public class ProdSecretsValidator {
 
     private final String jwtSecret;
     private final String encryptionKey;
+    private final boolean mailEnabled;
+    private final String mailApiKey;
+    private final String mailFrom;
 
     public ProdSecretsValidator(
             @Value("${app.jwt.secret}") String jwtSecret,
-            @Value("${app.encryption.key}") String encryptionKey) {
+            @Value("${app.encryption.key}") String encryptionKey,
+            @Value("${app.mail.enabled:false}") boolean mailEnabled,
+            @Value("${app.mail.api-key:}") String mailApiKey,
+            @Value("${app.mail.from:}") String mailFrom) {
         this.jwtSecret = jwtSecret;
         this.encryptionKey = encryptionKey;
+        this.mailEnabled = mailEnabled;
+        this.mailApiKey = mailApiKey;
+        this.mailFrom = mailFrom;
     }
 
     @PostConstruct
@@ -54,6 +63,25 @@ public class ProdSecretsValidator {
             throw new IllegalStateException(
                 "APP_ENCRYPTION_KEY is the dev fallback while running prod profile. "
               + "Generate one with `openssl rand -base64 32` and set APP_ENCRYPTION_KEY.");
+        }
+        // Mail activado sin credenciales es peor que mail apagado: apagado, los
+        // flujos que lo necesitan avisan "no configurado" y el operador se
+        // entera; activado y roto, el envío falla en silencio en cada login y
+        // los avisos de intrusión no llegan nunca sin que nadie lo note.
+        if (mailEnabled) {
+            if (mailApiKey == null || mailApiKey.isBlank()) {
+                throw new IllegalStateException(
+                    "app.mail.enabled=true but RESEND_API_KEY is empty. "
+                  + "Set RESEND_API_KEY or turn MAIL_ENABLED off.");
+            }
+            if (mailFrom == null || mailFrom.isBlank()) {
+                throw new IllegalStateException(
+                    "app.mail.enabled=true but MAIL_FROM is empty. "
+                  + "Set it to a sender on your Resend-verified domain.");
+            }
+        } else {
+            log.warn("Envío de correo apagado en prod — no se emiten códigos por correo "
+                   + "ni avisos de inicio de sesión.");
         }
         log.info("✅ prod secrets validated — no dev fallbacks detected.");
     }

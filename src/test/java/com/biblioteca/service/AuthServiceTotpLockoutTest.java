@@ -63,10 +63,20 @@ class AuthServiceTotpLockoutTest {
         PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
         when(passwordEncoder.encode(any())).thenReturn("$2a$12$dummydummydummydummydum");
 
+        LoginAlertService loginAlertService = mock(LoginAlertService.class);
+        when(loginAlertService.registerDevice(any(), any(), any(), any()))
+                .thenReturn(new LoginAlertService.DeviceCheck("device-cookie", false, "Chrome"));
+
         authService = new AuthService(userRepository, passwordEncoder, tokenProvider,
                 totpService, refreshTokenService, encryptionService,
-                mock(com.biblioteca.security.AccessTokenDenylistService.class));
+                mock(com.biblioteca.security.AccessTokenDenylistService.class),
+                mock(EmailCodeService.class), loginAlertService,
+                mock(MailService.class), mock(EmailTemplates.class));
     }
+
+    /** Contexto de request para los tests: los avisos están mockeados. */
+    private static final AuthService.LoginContext CTX =
+            new AuthService.LoginContext("1.1.1.1", "ua", null);
 
     private User conTotp() {
         User u = new User();
@@ -74,7 +84,24 @@ class AuthServiceTotpLockoutTest {
         u.setUsername("ana");
         u.setRole("super_admin");
         u.setTotpSecret(CIFRADO);
+        emularBloqueoDeBase(u);
         return u;
+    }
+
+    /**
+     * Emula el UPDATE condicional que impone el bloqueo: la base solo lo aplica
+     * si el contador REAL llegó al umbral.
+     *
+     * El contador ya no se calcula en Java — se incrementa con un UPDATE y es
+     * la base la que decide quién cruzó el umbral, para que N intentos
+     * concurrentes no lean todos el mismo valor y esquiven el techo entre
+     * todos. Estos tests siguen verificando la misma política; lo que cambia es
+     * quién la aplica.
+     */
+    private void emularBloqueoDeBase(User u) {
+        when(userRepository.lockTotpIfExhausted(
+                org.mockito.ArgumentMatchers.eq(7), org.mockito.ArgumentMatchers.anyInt(), any()))
+                .thenAnswer(inv -> u.getFailedTotpAttempts() >= (int) inv.getArgument(1) ? 1 : 0);
     }
 
     /** Prepara el camino feliz del step token para el userId 7. */
@@ -101,7 +128,7 @@ class AuthServiceTotpLockoutTest {
         when(encryptionService.decrypt(CIFRADO)).thenReturn(PLANO);
         when(totpService.verify(PLANO, "000000")).thenReturn(false);
 
-        assertThatThrownBy(() -> authService.verify2fa(req("000000"), "1.1.1.1", "ua"))
+        assertThatThrownBy(() -> authService.verify2fa(req("000000"), CTX))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("Código incorrecto");
 
@@ -109,7 +136,7 @@ class AuthServiceTotpLockoutTest {
         // contador nunca crece y no existe techo alguno.
         assertThat(u.getFailedTotpAttempts()).isEqualTo(1);
         assertThat(u.getTotpLockedUntil()).isNull();
-        verify(userRepository).save(u);
+        verify(userRepository).incrementTotpFailures(7);
     }
 
     @Test
@@ -121,7 +148,7 @@ class AuthServiceTotpLockoutTest {
         when(encryptionService.decrypt(CIFRADO)).thenReturn(PLANO);
         when(totpService.verify(PLANO, "000000")).thenReturn(false);
 
-        assertThatThrownBy(() -> authService.verify2fa(req("000000"), "1.1.1.1", "ua"))
+        assertThatThrownBy(() -> authService.verify2fa(req("000000"), CTX))
                 .isInstanceOf(ApiException.class);
 
         assertThat(u.getFailedTotpAttempts()).isEqualTo(5);
@@ -136,7 +163,7 @@ class AuthServiceTotpLockoutTest {
         stepTokenValido();
         when(userRepository.findById(7)).thenReturn(Optional.of(u));
 
-        assertThatThrownBy(() -> authService.verify2fa(req("123456"), "1.1.1.1", "ua"))
+        assertThatThrownBy(() -> authService.verify2fa(req("123456"), CTX))
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getStatus())
                 .isEqualTo(HttpStatus.FORBIDDEN);
@@ -158,7 +185,7 @@ class AuthServiceTotpLockoutTest {
         when(totpService.verify(PLANO, "123456")).thenReturn(true);
         when(tokenProvider.generateToken(7, "ana", "super_admin")).thenReturn("token-ok");
 
-        var result = authService.verify2fa(req("123456"), "1.1.1.1", "ua");
+        var result = authService.verify2fa(req("123456"), CTX);
 
         // Que se venza solo importa: un lockout permanente activable por un
         // tercero sería en sí un vector de denegación de servicio.
@@ -177,7 +204,7 @@ class AuthServiceTotpLockoutTest {
         when(totpService.verify(PLANO, "123456")).thenReturn(true);
         when(tokenProvider.generateToken(7, "ana", "super_admin")).thenReturn("token-ok");
 
-        authService.verify2fa(req("123456"), "1.1.1.1", "ua");
+        authService.verify2fa(req("123456"), CTX);
 
         // Sin reset, un usuario despistado acumularía fallos entre logins
         // legítimos y acabaría bloqueado sin haber sido atacado.
@@ -197,7 +224,7 @@ class AuthServiceTotpLockoutTest {
         when(encryptionService.decrypt(CIFRADO)).thenReturn(PLANO);
         when(totpService.verify(any(), any())).thenReturn(false);
 
-        assertThatThrownBy(() -> authService.verify2fa(req("000000"), "1.1.1.1", "ua"))
+        assertThatThrownBy(() -> authService.verify2fa(req("000000"), CTX))
                 .isInstanceOf(ApiException.class);
         assertThat(u.getTotpLockedUntil()).isNotNull();
 
@@ -210,7 +237,7 @@ class AuthServiceTotpLockoutTest {
         r.setStepToken(otroStep);
         r.setCode("111111");
 
-        assertThatThrownBy(() -> authService.verify2fa(r, "9.9.9.9", "ua"))
+        assertThatThrownBy(() -> authService.verify2fa(r, CTX))
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getStatus())
                 .isEqualTo(HttpStatus.FORBIDDEN);
@@ -275,6 +302,7 @@ class AuthServiceTotpLockoutTest {
         u.setId(7);
         u.setTotpPendingSecret(CIFRADO);
         u.setFailedTotpAttempts(4);
+        emularBloqueoDeBase(u);
         when(encryptionService.decrypt(CIFRADO)).thenReturn(PLANO);
         when(totpService.verify(PLANO, "000000")).thenReturn(false);
 

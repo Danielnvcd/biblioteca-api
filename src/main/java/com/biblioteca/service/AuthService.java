@@ -2,10 +2,12 @@ package com.biblioteca.service;
 
 import com.biblioteca.dto.*;
 import com.biblioteca.exception.ApiException;
+import com.biblioteca.model.EmailCode;
 import com.biblioteca.model.User;
 import com.biblioteca.repository.UserRepository;
 import com.biblioteca.security.EncryptionService;
 import com.biblioteca.security.JwtTokenProvider;
+import com.biblioteca.security.Permissions;
 import com.biblioteca.security.AccessTokenDenylistService;
 import com.biblioteca.security.RefreshTokenService;
 import com.biblioteca.security.TotpService;
@@ -15,6 +17,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -29,12 +33,20 @@ public class AuthService {
     private final RefreshTokenService refreshTokenService;
     private final EncryptionService encryptionService;
     private final AccessTokenDenylistService accessTokenDenylist;
+    private final EmailCodeService emailCodeService;
+    private final LoginAlertService loginAlertService;
+    private final MailService mailService;
+    private final EmailTemplates emailTemplates;
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
                        JwtTokenProvider tokenProvider, TotpService totpService,
                        RefreshTokenService refreshTokenService,
                        EncryptionService encryptionService,
-                       AccessTokenDenylistService accessTokenDenylist) {
+                       AccessTokenDenylistService accessTokenDenylist,
+                       EmailCodeService emailCodeService,
+                       LoginAlertService loginAlertService,
+                       MailService mailService,
+                       EmailTemplates emailTemplates) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
@@ -42,16 +54,34 @@ public class AuthService {
         this.refreshTokenService = refreshTokenService;
         this.encryptionService = encryptionService;
         this.accessTokenDenylist = accessTokenDenylist;
+        this.emailCodeService = emailCodeService;
+        this.loginAlertService = loginAlertService;
+        this.mailService = mailService;
+        this.emailTemplates = emailTemplates;
         this.dummyHash = passwordEncoder.encode(java.util.UUID.randomUUID().toString());
     }
+
+    /**
+     * Datos de la request que necesitan el registro de sesión y los avisos.
+     * Van juntos en un record para no arrastrar tres parámetros sueltos por
+     * toda la cadena de llamadas.
+     *
+     * @param deviceCookie valor de la cookie de dispositivo que trajo el
+     *                     navegador, o null si es la primera vez.
+     */
+    public record LoginContext(String ip, String userAgent, String deviceCookie) {}
 
     /**
      * Result of a successful authentication. Carries the access token (for the
      * response body) and the raw refresh token (which the controller must put
      * into an httpOnly cookie). For 2FA-pending logins, refreshToken is null
      * and only the step token in {@link LoginResponse} is populated.
+     *
+     * @param deviceCookie valor a reemitir en la cookie de dispositivo, o null
+     *                     si esta respuesta no abre sesión (2FA pendiente,
+     *                     refresh) y por lo tanto no toca el registro.
      */
-    public record AuthResult(LoginResponse body, String refreshToken) {}
+    public record AuthResult(LoginResponse body, String refreshToken, String deviceCookie) {}
 
     /**
      * Bloqueo por cuenta para /login. El rate-limit de RateLimitFilter es por IP
@@ -102,7 +132,7 @@ public class AuthService {
      */
     private final String dummyHash;
 
-    public AuthResult login(LoginRequest request, String ip, String userAgent) {
+    public AuthResult login(LoginRequest request, LoginContext ctx) {
         Optional<User> found = userRepository.findByUsername(request.getUsername());
         if (found.isEmpty()) {
             passwordEncoder.matches(request.getPassword(), dummyHash); // igualar tiempos
@@ -117,54 +147,90 @@ public class AuthService {
         }
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            int attempts = user.getFailedPasswordAttempts() + 1;
-            user.setFailedPasswordAttempts(attempts);
-            if (attempts >= MAX_LOGIN_ATTEMPTS) {
-                user.setPasswordLockedUntil(LocalDateTime.now().plus(LOGIN_LOCKOUT));
-            }
-            userRepository.save(user);
+            registerPasswordFailure(user, MAX_LOGIN_ATTEMPTS, LOGIN_LOCKOUT);
             throw ApiException.unauthorized("Credenciales incorrectas");
         }
 
         // Contraseña correcta → se limpia el estado de fallos. Se hace ANTES de la
         // rama de 2FA a propósito: quien probó la contraseña ya demostró conocerla,
         // y dejar el contador cargado bloquearía su próximo login legítimo.
-        if (user.getFailedPasswordAttempts() != 0 || user.getPasswordLockedUntil() != null) {
-            user.setFailedPasswordAttempts(0);
-            user.setPasswordLockedUntil(null);
-            userRepository.save(user);
-        }
+        clearPasswordFailures(user);
 
-        if (user.getTotpSecret() != null && !user.getTotpSecret().isEmpty()) {
+        boolean totpEnabled = hasTotp(user);
+        boolean emailEnabled = hasEmailFactor(user);
+
+        if (totpEnabled || emailEnabled) {
             String stepToken = tokenProvider.generate2faStepToken(
                     user.getId(), user.getUsername(), request.isRemember());
-            return new AuthResult(
-                    LoginResponse.twoFactorPending(stepToken, "Se requiere código 2FA"),
-                    null);
+
+            List<String> methods = new ArrayList<>();
+            if (totpEnabled) methods.add(METHOD_TOTP);
+            if (emailEnabled) methods.add(METHOD_EMAIL);
+
+            LoginResponse body = LoginResponse.twoFactorPending(stepToken, "Se requiere código 2FA");
+            body.setMethods(methods);
+            body.setMaskedEmail(emailEnabled ? EmailAddresses.mask(user.getEmail()) : null);
+
+            // Si el correo es el ÚNICO segundo factor, el código se manda acá
+            // mismo: obligar al usuario a pulsar "enviame el código" cuando no
+            // hay nada más que elegir es un paso sin sentido.
+            //
+            // Cuando TOTP también está activo NO se manda: la mayoría va a usar
+            // la app, y disparar un correo en cada login sería ruido — el envío
+            // queda a un clic de distancia en la pantalla de verificación.
+            if (emailEnabled && !totpEnabled) {
+                try {
+                    emailCodeService.issueAndSend(user, EmailCode.Purpose.LOGIN,
+                            user.getEmail(), ctx.ip());
+                    body.setCodeSent(true);
+                } catch (Exception e) {
+                    // Se atrapa Exception y no solo ApiException: además del
+                    // cooldown o del proveedor caído, acá adentro hay escrituras
+                    // a la base, y un problema de base convertiría en 500 un
+                    // login cuya contraseña ya se validó. El paso 1 tiene que
+                    // sobrevivir a que el envío falle por el motivo que sea —
+                    // la pantalla de verificación ofrece reenviar, y ahí sí el
+                    // usuario ve el motivo real.
+                    log.warn("No se envió el código de login a userId={}: {}",
+                            user.getId(), e.toString());
+                }
+            }
+            return new AuthResult(body, null, null);
         }
 
-        return issueSession(user, request.isRemember(), ip, userAgent);
+        return issueSession(user, request.isRemember(), ctx);
     }
 
-    public AuthResult verify2fa(Verify2faRequest request, String ip, String userAgent) {
-        // Step token MUST be valid and have scope=2fa-pending — proves step 1 completed.
-        String stepToken = request.getStepToken();
-        if (stepToken == null || !tokenProvider.validateToken(stepToken)) {
-            throw ApiException.unauthorized("Sesión 2FA expirada, vuelve a iniciar sesión");
-        }
-        if (!"2fa-pending".equals(tokenProvider.getScopeFromToken(stepToken))) {
-            throw ApiException.unauthorized("Token inválido para 2FA");
-        }
+    /** Nombres de los métodos de segundo factor, tal como los ve el frontend. */
+    public static final String METHOD_TOTP = "totp";
+    public static final String METHOD_EMAIL = "email";
 
-        Integer userId = tokenProvider.getUserIdFromToken(stepToken);
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> ApiException.unauthorized("Sesión 2FA inválida"));
+    private static boolean hasTotp(User user) {
+        return user.getTotpSecret() != null && !user.getTotpSecret().isEmpty();
+    }
+
+    /**
+     * El factor por correo cuenta solo si está activado, el correo está
+     * verificado Y el rol lo admite. Lo último se comprueba también acá, en el
+     * camino del login, y no solo al activarlo: si una cuenta es promovida a
+     * super_admin después de haberlo encendido, el factor tiene que dejar de
+     * valer en ese mismo momento, sin depender de que alguien se acuerde de
+     * apagárselo.
+     */
+    private static boolean hasEmailFactor(User user) {
+        return user.isEmail2faEnabled()
+                && user.hasUsableEmail()
+                && Permissions.canUseEmailAsSecondFactor(user.getRole(), user.getUsername());
+    }
+
+    public AuthResult verify2fa(Verify2faRequest request, LoginContext ctx) {
+        User user = userFromStepToken(request.getStepToken());
 
         // Se comprueba ANTES de mirar el secret: mientras dura el bloqueo no se
         // verifica ningún código, así que el endpoint tampoco sirve de oráculo.
         enforceTotpLockout(user);
 
-        if (user.getTotpSecret() == null || user.getTotpSecret().isEmpty()) {
+        if (!hasTotp(user)) {
             throw ApiException.badRequest("2FA no está configurado para este usuario");
         }
 
@@ -176,8 +242,56 @@ public class AuthService {
 
         // "Remember" was decided at step 1 and is carried in the step token,
         // so it can't be flipped between login and 2FA.
-        boolean remember = tokenProvider.getRememberFromToken(stepToken);
-        return issueSession(user, remember, ip, userAgent);
+        boolean remember = tokenProvider.getRememberFromToken(request.getStepToken());
+        return issueSession(user, remember, ctx);
+    }
+
+    /**
+     * Envía (o reenvía) el código de acceso durante un login pendiente de 2FA.
+     *
+     * El destinatario sale del step token, nunca del cuerpo del request: es lo
+     * que impide que este endpoint se use para mandarle correos a la cuenta de
+     * cualquiera con solo saber un nombre de usuario.
+     */
+    public EmailCodeService.Issued requestLoginCode(String stepToken, String ip) {
+        User user = userFromStepToken(stepToken);
+        if (!hasEmailFactor(user)) {
+            throw ApiException.badRequest(
+                    "Esta cuenta no tiene el código por correo activado");
+        }
+        return emailCodeService.issueAndSend(user, EmailCode.Purpose.LOGIN, user.getEmail(), ip);
+    }
+
+    /** Segundo paso del login cuando el factor elegido es el código por correo. */
+    public AuthResult verifyEmailCode(VerifyEmailCodeRequest request, LoginContext ctx) {
+        User user = userFromStepToken(request.getStepToken());
+        if (!hasEmailFactor(user)) {
+            throw ApiException.badRequest(
+                    "Esta cuenta no tiene el código por correo activado");
+        }
+        emailCodeService.verifyAndConsume(user, EmailCode.Purpose.LOGIN, request.getCode());
+
+        boolean remember = tokenProvider.getRememberFromToken(request.getStepToken());
+        return issueSession(user, remember, ctx);
+    }
+
+    /**
+     * Valida el step token y devuelve el usuario al que pertenece.
+     *
+     * El chequeo de scope no es decorativo: sin él, un access token corriente
+     * serviría para completar el segundo factor de su propio dueño, y el paso
+     * dejaría de probar nada.
+     */
+    private User userFromStepToken(String stepToken) {
+        if (stepToken == null || !tokenProvider.validateToken(stepToken)) {
+            throw ApiException.unauthorized("Sesión 2FA expirada, vuelve a iniciar sesión");
+        }
+        if (!"2fa-pending".equals(tokenProvider.getScopeFromToken(stepToken))) {
+            throw ApiException.unauthorized("Token inválido para 2FA");
+        }
+        Integer userId = tokenProvider.getUserIdFromToken(stepToken);
+        return userRepository.findById(userId)
+                .orElseThrow(() -> ApiException.unauthorized("Sesión 2FA inválida"));
     }
 
     /** Rechaza la operación si la cuenta está bloqueada por fallos de TOTP. */
@@ -190,29 +304,60 @@ public class AuthService {
     }
 
     /**
-     * Suma un fallo de TOTP y bloquea al llegar al umbral. El save() es
-     * explícito porque la entidad no viaja en una transacción con dirty
-     * checking — sin él el contador solo viviría en memoria y el bloqueo
-     * no llegaría nunca a existir.
+     * Suma un fallo de TOTP y bloquea al llegar al umbral.
+     *
+     * El incremento y el bloqueo son dos UPDATEs condicionales contra la base,
+     * no un cálculo sobre la entidad en memoria. Con lo segundo, N intentos
+     * simultáneos leen todos el mismo contador y guardan todos el mismo valor:
+     * el bloqueo no llega nunca justo contra el atacante que paraleliza, que
+     * es el único escenario donde este techo importa (para el resto ya está el
+     * límite por IP). Ver el bloque de comentarios de UserRepository.
      */
     private void registerTotpFailure(User user) {
-        int attempts = user.getFailedTotpAttempts() + 1;
-        user.setFailedTotpAttempts(attempts);
-        if (attempts >= MAX_TOTP_ATTEMPTS) {
-            user.setTotpLockedUntil(LocalDateTime.now().plus(TOTP_LOCKOUT));
+        userRepository.incrementTotpFailures(user.getId());
+        user.setFailedTotpAttempts(user.getFailedTotpAttempts() + 1);
+
+        LocalDateTime until = LocalDateTime.now().plus(TOTP_LOCKOUT);
+        if (userRepository.lockTotpIfExhausted(user.getId(), MAX_TOTP_ATTEMPTS, until) > 0) {
+            user.setTotpLockedUntil(until);
             // El 2FA es la última línea de defensa de la cuenta: que se agote
             // merece quedar en el log aunque el bloqueo se venza solo.
-            log.warn("TOTP lockout activado para userId={} tras {} fallos", user.getId(), attempts);
+            log.warn("TOTP lockout activado para userId={}", user.getId());
         }
-        userRepository.save(user);
     }
 
     /** Limpia el estado de fallos tras un código correcto. */
     private void clearTotpFailures(User user) {
         if (user.getFailedTotpAttempts() != 0 || user.getTotpLockedUntil() != null) {
+            userRepository.clearTotpFailures(user.getId());
             user.setFailedTotpAttempts(0);
             user.setTotpLockedUntil(null);
-            userRepository.save(user);
+        }
+    }
+
+    /**
+     * Suma un fallo de contraseña y bloquea al llegar al umbral, de forma
+     * atómica. El umbral es parámetro porque las mismas columnas las comparten
+     * el login (10 intentos) y la verificación de contraseña actual (5): la
+     * operación más estricta gana, que es la dirección segura del error.
+     */
+    public void registerPasswordFailure(User user, int threshold, java.time.Duration lockout) {
+        userRepository.incrementPasswordFailures(user.getId());
+        user.setFailedPasswordAttempts(user.getFailedPasswordAttempts() + 1);
+
+        LocalDateTime until = LocalDateTime.now().plus(lockout);
+        if (userRepository.lockPasswordIfExhausted(user.getId(), threshold, until) > 0) {
+            user.setPasswordLockedUntil(until);
+            log.warn("Bloqueo por contraseña activado para userId={}", user.getId());
+        }
+    }
+
+    /** Limpia el estado de fallos de contraseña tras un acierto. */
+    public void clearPasswordFailures(User user) {
+        if (user.getFailedPasswordAttempts() != 0 || user.getPasswordLockedUntil() != null) {
+            userRepository.clearPasswordFailures(user.getId());
+            user.setFailedPasswordAttempts(0);
+            user.setPasswordLockedUntil(null);
         }
     }
 
@@ -222,12 +367,25 @@ public class AuthService {
      * when false, no refresh is issued and the session ends when the access
      * token expires.
      */
-    private AuthResult issueSession(User user, boolean remember, String ip, String userAgent) {
+    private AuthResult issueSession(User user, boolean remember, LoginContext ctx) {
         String token = tokenProvider.generateToken(user.getId(), user.getUsername(), user.getRole());
         String refreshToken = remember
-                ? refreshTokenService.issue(user.getId(), ip, userAgent)
+                ? refreshTokenService.issue(user.getId(), ctx.ip(), ctx.userAgent())
                 : null;
-        return new AuthResult(new LoginResponse(token, toDto(user)), refreshToken);
+
+        // El aviso se dispara ACÁ y no en el controller porque éste es el único
+        // punto por el que sale una sesión nueva: login directo, verify-2fa y
+        // verify-email-code pasan los tres por acá. Colgarlo de cada endpoint
+        // significaría que el próximo camino de autenticación que se agregue
+        // nazca sin aviso y nadie lo note.
+        //
+        // refresh() NO pasa por acá a propósito: renovar no es iniciar sesión, y
+        // avisar cada 15 minutos volvería inútil el aviso.
+        LoginAlertService.DeviceCheck device = loginAlertService.registerDevice(
+                user.getId(), ctx.deviceCookie(), ctx.userAgent(), ctx.ip());
+        loginAlertService.notifyLogin(user, device, ctx.ip());
+
+        return new AuthResult(new LoginResponse(token, toDto(user)), refreshToken, device.cookieValue());
     }
 
     /**
@@ -239,7 +397,9 @@ public class AuthService {
         User user = userRepository.findById(rotated.userId())
                 .orElseThrow(() -> ApiException.unauthorized("Sesión inválida"));
         String token = tokenProvider.generateToken(user.getId(), user.getUsername(), user.getRole());
-        return new AuthResult(new LoginResponse(token, toDto(user)), rotated.rawToken());
+        // deviceCookie null: renovar no cuenta como inicio de sesión, así que
+        // no toca el registro de dispositivos ni reemite la cookie.
+        return new AuthResult(new LoginResponse(token, toDto(user)), rotated.rawToken(), null);
     }
 
     /**
@@ -338,6 +498,15 @@ public class AuthService {
      * Reseteo administrativo del 2FA: lo limpia sin pedir código, para destrabar
      * a quien perdió el dispositivo. El control de permisos y el registro en
      * bitácora corren por cuenta del caller.
+     *
+     * Limpia LOS DOS segundos factores, no solo el TOTP. Si dejara el código
+     * por correo activo, quien perdiera el acceso a su buzón quedaría fuera de
+     * su cuenta sin ninguna vía de rescate — el mismo callejón sin salida que
+     * este reseteo existe para evitar, solo que por el otro factor.
+     *
+     * El correo NO se borra: sigue sirviendo para los avisos, que es
+     * justamente lo que conviene mantener encendido después de un reseteo
+     * pedido por sospecha de acceso indebido.
      */
     public void clear2fa(User user) {
         user.setTotpSecret(null);
@@ -347,7 +516,176 @@ public class AuthService {
         // 15 minutos para configurar el factor nuevo.
         user.setFailedTotpAttempts(0);
         user.setTotpLockedUntil(null);
+        user.setEmail2faEnabled(false);
+        user.setFailedEmailCodeAttempts(0);
+        user.setEmailCodeLockedUntil(null);
         userRepository.save(user);
+        emailCodeService.invalidate(user, EmailCode.Purpose.LOGIN);
+    }
+
+    // ======================================================================
+    // Correo de la cuenta
+    // ======================================================================
+
+    /**
+     * Da de alta (o cambia) el correo: lo deja como PENDIENTE y manda un
+     * código a esa dirección. No toca {@code email} todavía — mientras nadie
+     * pruebe que lee ese buzón, la dirección no vale como canal de confianza.
+     *
+     * El caller ya verificó la contraseña actual.
+     */
+    public EmailCodeService.Issued startEmailChange(User user, String rawEmail, String ip) {
+        String email = EmailAddresses.normalize(rawEmail);
+        if (!EmailAddresses.isValid(email)) {
+            throw ApiException.badRequest("Ingresá un correo válido");
+        }
+        if (email.equals(user.getEmail()) && user.isEmailVerified()) {
+            throw ApiException.badRequest("Ese ya es el correo de tu cuenta");
+        }
+        requireEmailAvailable(email, user.getId());
+
+        user.setPendingEmail(email);
+        userRepository.save(user);
+
+        return emailCodeService.issueAndSend(user, EmailCode.Purpose.VERIFY_EMAIL, email, ip);
+    }
+
+    /**
+     * Confirma la dirección pendiente y la promueve a correo de la cuenta.
+     *
+     * Se promueve la dirección que viene guardada EN EL CÓDIGO, no la que hay
+     * en {@code pendingEmail} al momento de confirmar: así, si entre la emisión
+     * y la confirmación alguien cambió el pendiente, lo que queda verificado es
+     * la dirección que efectivamente recibió el código.
+     */
+    public void confirmEmailChange(User user, String code) {
+        if (user.getPendingEmail() == null || user.getPendingEmail().isBlank()) {
+            throw ApiException.badRequest(
+                    "No hay ningún correo pendiente de confirmar. Volvé a empezar.");
+        }
+        String verified = emailCodeService.verifyAndConsume(user, EmailCode.Purpose.VERIFY_EMAIL, code);
+
+        // Se revisa de nuevo la unicidad: entre la emisión y la confirmación
+        // otra cuenta pudo quedarse con esa dirección.
+        requireEmailAvailable(verified, user.getId());
+
+        String previous = user.isEmailVerified() ? user.getEmail() : null;
+
+        user.setEmail(verified);
+        user.setEmailVerified(true);
+        user.setPendingEmail(null);
+        saveHandlingEmailConflict(user);
+
+        // Aviso a la dirección ANTERIOR. Es la señal que delata un secuestro:
+        // quien entra a una cuenta ajena mueve el correo primero, y si el aviso
+        // fuera solo a la dirección nueva el dueño real no se enteraría.
+        if (previous != null && !previous.equalsIgnoreCase(verified)) {
+            mailService.sendAsync(previous,
+                    emailTemplates.emailChanged(displayName(user), EmailAddresses.mask(verified)));
+        }
+    }
+
+    /**
+     * Quita el correo de la cuenta. Apaga también el segundo factor por correo:
+     * dejarlo activo sin dirección dejaría al usuario sin poder iniciar sesión.
+     *
+     * El caller ya verificó la contraseña actual.
+     */
+    public void removeEmail(User user) {
+        if (user.getEmail() == null && user.getPendingEmail() == null) {
+            throw ApiException.badRequest("No hay ningún correo configurado");
+        }
+        String previous = user.isEmailVerified() ? user.getEmail() : null;
+
+        user.setEmail(null);
+        user.setEmailVerified(false);
+        user.setPendingEmail(null);
+        user.setEmail2faEnabled(false);
+        // El bloqueo por códigos deja de tener sentido sin canal: si no se
+        // limpia, quien vuelva a dar de alta un correo se encuentra bloqueado
+        // por intentos de un canal que ya no existe.
+        user.setFailedEmailCodeAttempts(0);
+        user.setEmailCodeLockedUntil(null);
+        userRepository.save(user);
+
+        emailCodeService.invalidate(user, EmailCode.Purpose.LOGIN);
+        emailCodeService.invalidate(user, EmailCode.Purpose.VERIFY_EMAIL);
+
+        if (previous != null) {
+            mailService.sendAsync(previous, emailTemplates.emailRemoved(displayName(user)));
+        }
+    }
+
+    /**
+     * Aplica los cambios de preferencia. Los nulls significan "no tocar": la
+     * pantalla manda solo el control que el usuario movió.
+     *
+     * El caller ya verificó la contraseña cuando el cambio incluye
+     * {@code email2faEnabled} (es un cambio de factor de autenticación).
+     */
+    public void updateEmailPreferences(User user, EmailPreferencesRequest body) {
+        boolean silencing = false;
+        if (body.getLoginAlerts() != null) {
+            silencing = LoginAlertService.ALERTS_OFF.equals(body.getLoginAlerts())
+                    && !LoginAlertService.ALERTS_OFF.equals(user.getLoginAlerts());
+            user.setLoginAlerts(body.getLoginAlerts());
+        }
+        if (body.getEmail2faEnabled() != null) {
+            if (body.getEmail2faEnabled() && !user.hasUsableEmail()) {
+                throw ApiException.badRequest(
+                        "Primero confirmá tu correo para poder recibir códigos");
+            }
+            if (body.getEmail2faEnabled()
+                    && !Permissions.canUseEmailAsSecondFactor(user.getRole(), user.getUsername())) {
+                throw ApiException.forbidden(
+                        "Las cuentas de administración no pueden usar el código por correo como "
+                      + "segundo factor: usá la app autenticadora. El correo sigue sirviendo "
+                      + "para los avisos de inicio de sesión.");
+            }
+            user.setEmail2faEnabled(body.getEmail2faEnabled());
+        }
+        userRepository.save(user);
+
+        // Un último aviso al apagar los avisos. Parece redundante y no lo es:
+        // silenciar la notificación es exactamente el primer movimiento de
+        // quien entró a una cuenta ajena, y sin este mensaje ese movimiento
+        // sería el único que nunca se anuncia.
+        if (silencing && user.hasUsableEmail()) {
+            mailService.sendAsync(user.getEmail(),
+                    emailTemplates.alertsDisabled(displayName(user), LocalDateTime.now()));
+        }
+    }
+
+    /**
+     * Rechaza direcciones ya tomadas. El mensaje es genérico a propósito: uno
+     * que dijera "ese correo ya está en uso" convertiría el endpoint en un
+     * oráculo para averiguar quién tiene cuenta en el sistema.
+     */
+    private void requireEmailAvailable(String email, Integer selfId) {
+        userRepository.findByEmail(email).ifPresent(other -> {
+            if (!other.getId().equals(selfId)) {
+                throw ApiException.badRequest("No se puede usar ese correo. Probá con otro.");
+            }
+        });
+    }
+
+    /**
+     * El índice único de V9 es la última palabra sobre la unicidad del correo:
+     * la comprobación previa puede perder una carrera entre dos altas
+     * simultáneas de la misma dirección. Se traduce el error de la base al
+     * mismo mensaje genérico para no filtrar por qué falló.
+     */
+    private void saveHandlingEmailConflict(User user) {
+        try {
+            userRepository.saveAndFlush(user);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            throw ApiException.badRequest("No se puede usar ese correo. Probá con otro.");
+        }
+    }
+
+    private static String displayName(User user) {
+        String full = user.getFullName();
+        return full != null && !full.isBlank() ? full : user.getUsername();
     }
 
     public UserDto toDto(User user) {
@@ -361,8 +699,15 @@ public class AuthService {
         dto.setFactory(user.getFactory());
         dto.setContactInfo(user.getContactInfo());
         dto.setProfilePic(user.getProfilePic());
-        dto.setTotpEnabled(user.getTotpSecret() != null && !user.getTotpSecret().isEmpty());
+        dto.setTotpEnabled(hasTotp(user));
         dto.setLastSeen(user.getLastSeen());
+        dto.setEmail(user.getEmail());
+        dto.setEmailVerified(user.isEmailVerified());
+        dto.setPendingEmail(user.getPendingEmail());
+        dto.setEmail2faEnabled(user.isEmail2faEnabled());
+        dto.setEmailFactorAllowed(
+                Permissions.canUseEmailAsSecondFactor(user.getRole(), user.getUsername()));
+        dto.setLoginAlerts(user.getLoginAlerts());
         return dto;
     }
 
