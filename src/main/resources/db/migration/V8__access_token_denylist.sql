@@ -11,7 +11,7 @@
 -- cerraría la sesión en TODOS los dispositivos al desconectarse de uno solo.
 -- El jti permite revocar exactamente la sesión que se cierra.
 --
--- La tabla se mantiene diminuta sola: solo viven aquí los tokens revocados que
+-- La tabla se mantiene diminuta sola: solo viven acá los tokens revocados que
 -- todavía no expiraron (≤15 min), y cada revocación borra los vencidos.
 -- ============================================================================
 
