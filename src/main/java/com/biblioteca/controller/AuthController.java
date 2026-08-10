@@ -606,7 +606,8 @@ public class AuthController {
                                                  @RequestParam(required = false) @Size(max = 100) @Pattern(regexp = SAFE_TEXT_REGEX, message = "Caracteres no permitidos") String position,
                                                  @RequestParam(required = false) @Size(max = 100) @Pattern(regexp = SAFE_TEXT_REGEX, message = "Caracteres no permitidos") String factory,
                                                  @RequestParam(required = false) @Size(max = 200) @Pattern(regexp = SAFE_TEXT_REGEX, message = "Caracteres no permitidos") String contactInfo,
-                                                 @RequestParam(required = false) MultipartFile profilePic) {
+                                                 @RequestParam(required = false) MultipartFile profilePic,
+                                                 @RequestParam(required = false, defaultValue = "false") boolean removeProfilePic) {
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> ApiException.notFound("Usuario no encontrado"));
         if (fullName != null) user.setFullName(fullName);
@@ -614,12 +615,41 @@ public class AuthController {
         if (position != null) user.setPosition(position);
         if (factory != null) user.setFactory(factory);
         if (contactInfo != null) user.setContactInfo(contactInfo);
+
+        // Foto: subir una nueva y quitar la actual son la misma operación desde
+        // el punto de vista del archivo viejo — en los dos casos deja de estar
+        // referenciado y hay que sacarlo del disco. Antes solo se reemplazaba
+        // el nombre en la fila y el archivo anterior se quedaba ahí para
+        // siempre; la carpeta perfiles/ crecía con cada cambio de foto.
+        String previous = user.getProfilePic();
         if (profilePic != null && !profilePic.isEmpty()) {
-            String filename = fileStorageService.store(profilePic, "perfiles");
-            user.setProfilePic(filename);
+            user.setProfilePic(fileStorageService.store(profilePic, "perfiles"));
+        } else if (removeProfilePic) {
+            user.setProfilePic(DEFAULT_PROFILE_PIC);
         }
+
         userRepository.save(user);
+        // El borrado va DESPUÉS de guardar y solo si la fila ya no lo apunta:
+        // si el save falla, el archivo sigue en su lugar y la cuenta conserva
+        // su foto. Al revés, un fallo dejaría la foto borrada y la fila
+        // apuntando a un archivo que ya no existe.
+        if (!java.util.Objects.equals(previous, user.getProfilePic())) {
+            deleteAvatarIfUnused(previous, user.getId());
+        }
         return ResponseEntity.ok(authService.toDto(user));
+    }
+
+    /** Avatar por defecto: no es un archivo subido, así que nunca se borra. */
+    private static final String DEFAULT_PROFILE_PIC = "default.png";
+
+    private void deleteAvatarIfUnused(String filename, Integer ownerId) {
+        if (filename == null || filename.isBlank() || DEFAULT_PROFILE_PIC.equals(filename)) {
+            return;
+        }
+        if (userRepository.existsByProfilePicAndIdNot(filename, ownerId)) {
+            return; // otra cuenta sigue usando ese archivo
+        }
+        fileStorageService.delete(filename, "perfiles");
     }
 
     @PostMapping("/change-password/{id}")

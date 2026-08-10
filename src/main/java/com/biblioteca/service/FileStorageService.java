@@ -2,6 +2,8 @@ package com.biblioteca.service;
 
 import com.biblioteca.exception.ApiException;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -33,6 +35,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class FileStorageService {
+
+    private static final Logger logger = LoggerFactory.getLogger(FileStorageService.class);
 
     @Value("${app.upload.dir}")
     private String uploadDir;
@@ -133,11 +137,31 @@ public class FileStorageService {
                 : "";
     }
 
+    /**
+     * Borra el archivo y TODO lo que se derivó de él.
+     *
+     * Antes solo borraba el original y dejaba el {@code .thumb.jpg} atrás. Como
+     * el thumbnail se genera solo la primera vez que alguien pide la imagen,
+     * nadie lo ve al borrar y la basura se acumula en silencio en todas las
+     * categorías — contenidos, quejas y fotos de perfil por igual. También se
+     * limpia el {@code .tmp} por si alguna generación quedó a medias.
+     *
+     * Sigue sin lanzar: borrar un archivo es la última parte de operaciones que
+     * ya modificaron la base, y fallar acá no debe deshacer lo anterior. Pero
+     * ahora deja constancia — un disco que no se puede limpiar es algo que
+     * alguien debería terminar mirando.
+     */
     public void delete(String filename, String category) {
+        if (filename == null || filename.isBlank()) return;
         try {
             Path path = resolvePath(category, filename);
             Files.deleteIfExists(path);
-        } catch (Exception ignored) {
+
+            Path thumb = path.resolveSibling(path.getFileName() + ".thumb.jpg");
+            Files.deleteIfExists(thumb);
+            Files.deleteIfExists(thumb.resolveSibling(thumb.getFileName() + ".tmp"));
+        } catch (Exception e) {
+            logger.warn("No se pudo borrar {}/{}: {}", category, filename, e.getMessage());
         }
     }
 
