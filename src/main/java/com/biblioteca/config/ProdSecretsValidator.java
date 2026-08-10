@@ -83,6 +83,8 @@ public class ProdSecretsValidator {
             log.warn("Envío de correo apagado en prod — no se emiten códigos por correo "
                    + "ni avisos de inicio de sesión.");
         }
-        log.info("✅ prod secrets validated — no dev fallbacks detected.");
+        // Sin emoji: en prod los logs salen como JSON estructurado y terminan
+        // en herramientas donde un carácter decorativo es solo ruido.
+        log.info("prod secrets validated - no dev fallbacks detected.");
     }
 }
